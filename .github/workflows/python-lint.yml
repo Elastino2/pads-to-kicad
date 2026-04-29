@@ -31,12 +31,11 @@ jobs:
 
       - name: Python syntax validation
         run: |
-          python -m py_compile tools/*.py
+          python -m py_compile *.py
           echo "✓ All Python files have valid syntax"
 
       - name: Check for import issues
         run: |
-          cd tools
           python -c "
           import sys
           import importlib.util
@@ -55,7 +54,6 @@ jobs:
 
       - name: Verify module structure
         run: |
-          cd tools
           python -c "
           # Verify core classes exist
           from pads_model import ParseResult, Part, PartTypeDef
@@ -69,7 +67,6 @@ jobs:
 
       - name: Check for unused imports
         run: |
-          cd tools
           python << 'EOF'
           import ast
           import sys
@@ -112,7 +109,6 @@ jobs:
 
       - name: Validate type annotations
         run: |
-          cd tools
           python << 'EOF'
           import ast
           import sys
@@ -155,7 +151,6 @@ jobs:
 
       - name: Check line length
         run: |
-          cd tools
           python << 'EOF'
           import sys
           
@@ -182,7 +177,6 @@ jobs:
 
       - name: Check for common issues
         run: |
-          cd tools
           python << 'EOF'
           import re
           import sys
