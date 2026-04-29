@@ -63,6 +63,13 @@ def _sanitize_symbol_name(name: str) -> str:
     return sanitized or "UNNAMED"
 
 
+def _sanitize_output_filename(name: str) -> str:
+    """Return a filesystem-safe output filename."""
+    safe = re.sub(r'[<>:"/\\|?*\x00-\x1F]', "_", name).strip()
+    safe = safe.rstrip(". ")
+    return safe or "output.kicad_sch"
+
+
 def _pin_type_from_direction(direction: str) -> str:
     d = (direction or "U").upper()
     if d in {"I"}:
@@ -811,6 +818,8 @@ def write_kicad_schematic(
     - Reconstruct net connectivity by synthetic wires and global labels.
     """
     out_path = Path(output_path)
+    out_path = out_path.with_name(_sanitize_output_filename(out_path.name))
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     root_uuid = _uuid()
 
     pin_defs_by_type = _collect_symbol_pin_defs(result)

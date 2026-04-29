@@ -3,12 +3,26 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from datetime import datetime
 from uuid import uuid4
 
 from pads_parser import PadsParser, ParseResult, build_connectivity, extract_target_report
 from pads_to_kicad import build_kicad_ir, write_kicad_schematic
+
+
+def _sanitize_filename_component(name: str) -> str:
+    """Return a cross-platform safe filename component."""
+    safe = re.sub(r'[<>:"/\\|?*\x00-\x1F]', "_", name).strip()
+    safe = safe.rstrip(". ")
+    return safe or "sheet"
+
+
+def _sheet_output_filename(project_name: str, sheet_name: str) -> str:
+    proj = _sanitize_filename_component(project_name)
+    sheet = _sanitize_filename_component(sheet_name)
+    return f"{proj}_{sheet}.kicad_sch"
 
 
 def write_legacy_pro_project_file(
@@ -33,7 +47,8 @@ def write_legacy_pro_project_file(
     if sheet_results:
         lines.append("[sheetnames]")
         for idx, (sheet_name, _sheet_result) in enumerate(sheet_results, start=1):
-            lines.append(f"{idx}=00000000-0000-0000-0000-{idx:012d}:{project_name}_{sheet_name}.kicad_sch")
+            sheet_file = _sheet_output_filename(project_name, sheet_name)
+            lines.append(f"{idx}=00000000-0000-0000-0000-{idx:012d}:{sheet_file}")
 
     lines.extend(
         [
@@ -75,7 +90,7 @@ def write_root_multisheet_schematic(
         row = (idx - 1) // cols
         sx = x0 + col * dx
         sy = y0 + row * dy
-        sheet_file = f"{project_name}_{sheet_name}.kicad_sch"
+        sheet_file = _sheet_output_filename(project_name, sheet_name)
         sheet_nodes.append((sheet_name, sheet_file, sx, sy))
 
     lines: list[str] = []
@@ -126,7 +141,6 @@ def main() -> None:
     ap.add_argument("-o", "--output", type=Path, default=None, help="Validation report JSON path")
     ap.add_argument("--targets", nargs="+", default=None, help="Target refdes list")
     ap.add_argument("--kicad-ir", type=Path, default=None, help="Optional KiCad IR JSON output path")
-    ap.add_argument("--kicad-sch", type=Path, default=None, help="Optional output .kicad_sch path")
     ap.add_argument(
         "--kicad-sch-multi-dir",
         type=Path,
@@ -165,14 +179,6 @@ def main() -> None:
         ir = build_kicad_ir(result)
         args.kicad_ir.write_text(json.dumps(ir, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    if args.kicad_sch:
-        write_kicad_schematic(
-            result,
-            args.kicad_sch,
-            project_name=args.project_name,
-            version=args.kicad_sch_version,
-        )
-
     legacy_pro_path: Path | None = None
     root_sch_path: Path | None = None
     if args.kicad_sch_multi_dir:
@@ -190,7 +196,7 @@ def main() -> None:
             args.kicad_sch_version,
         )
         for idx, (sheet_name, sheet_result) in enumerate(sheet_results, start=1):
-            sheet_file = args.kicad_sch_multi_dir / f"{args.project_name}_{sheet_name}.kicad_sch"
+            sheet_file = args.kicad_sch_multi_dir / _sheet_output_filename(args.project_name, sheet_name)
             write_kicad_schematic(
                 sheet_result,
                 sheet_file,
@@ -208,8 +214,6 @@ def main() -> None:
         print(f"Report: {args.output}")
     if args.kicad_ir:
         print(f"KiCad IR: {args.kicad_ir}")
-    if args.kicad_sch:
-        print(f"KiCad SCH: {args.kicad_sch}")
     if args.kicad_sch_multi_dir:
         print(f"KiCad SCH (multi-sheet dir): {args.kicad_sch_multi_dir}")
     if root_sch_path:
