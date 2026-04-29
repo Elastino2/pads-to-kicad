@@ -161,7 +161,7 @@ def main() -> None:
     connectivity = build_connectivity(result)
 
     target_report = extract_target_report(args.targets or [], None, result, connectivity)
-    report = {
+    report: dict[str, object] = {
         "file": str(args.input),
         "summary": {
             "parts_count": len(result.parts),
