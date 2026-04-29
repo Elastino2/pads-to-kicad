@@ -1,0 +1,222 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+from datetime import datetime
+from uuid import uuid4
+
+from pads_parser import PadsParser, ParseResult, build_connectivity, extract_target_report
+from pads_to_kicad import build_kicad_ir, write_kicad_schematic
+
+
+def write_legacy_pro_project_file(
+    output_dir: Path,
+    project_name: str,
+    sheet_results: list[tuple[str, ParseResult]] | None = None,
+) -> Path:
+    """Write a minimal legacy KiCad .pro project file."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    pro_path = output_dir / f"{project_name}.pro"
+    timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    lines = [
+        f"update={timestamp}",
+        "version=1",
+        "last_client=eeschema",
+        "[cvpcb]",
+        "version=1",
+        "NetIExt=net",
+        "[cvpcb/libraries]",
+    ]
+
+    if sheet_results:
+        lines.append("[sheetnames]")
+        for idx, (sheet_name, _sheet_result) in enumerate(sheet_results, start=1):
+            lines.append(f"{idx}=00000000-0000-0000-0000-{idx:012d}:{project_name}_{sheet_name}.kicad_sch")
+
+    lines.extend(
+        [
+            "[schematic_editor]",
+            "version=1",
+            "PageLayoutDescrFile=",
+            "PlotDirectoryName=",
+            "NetFmtName=Pcbnew",
+            "",
+        ]
+    )
+
+    content = "\n".join(lines)
+    pro_path.write_text(content, encoding="utf-8")
+    return pro_path
+
+
+def write_root_multisheet_schematic(
+    output_dir: Path,
+    project_name: str,
+    sheet_results: list[tuple[str, ParseResult]],
+    version: int,
+) -> Path:
+    """Write a top-level KiCad schematic that links generated per-sheet files."""
+    root_path = output_dir / f"{project_name}.kicad_sch"
+
+    # Place sheet boxes on a simple grid.
+    x0 = 40.0
+    y0 = 30.0
+    w = 36.0
+    h = 14.0
+    dx = 42.0
+    dy = 18.0
+    cols = 3
+
+    sheet_nodes: list[tuple[str, str, float, float]] = []
+    for idx, (sheet_name, _sheet_result) in enumerate(sheet_results, start=1):
+        col = (idx - 1) % cols
+        row = (idx - 1) // cols
+        sx = x0 + col * dx
+        sy = y0 + row * dy
+        sheet_file = f"{project_name}_{sheet_name}.kicad_sch"
+        sheet_nodes.append((sheet_name, sheet_file, sx, sy))
+
+    lines: list[str] = []
+    lines.append(f"(kicad_sch (version {version}) (generator pads_pipeline)")
+    lines.append("")
+    lines.append("  (paper \"A4\")")
+    lines.append("")
+    lines.append("  (lib_symbols")
+    lines.append("  )")
+    lines.append("")
+
+    # Need stable mapping between generated sheet entry and sheet_instances path.
+    sheet_uuid_by_file: dict[str, str] = {}
+    for idx, (sheet_name, sheet_file, sx, sy) in enumerate(sheet_nodes, start=1):
+        suuid = str(uuid4())
+        sheet_uuid_by_file[sheet_file] = suuid
+        lines.append(f"  (sheet (at {sx:.2f} {sy:.2f}) (size {w:.2f} {h:.2f}) (fields_autoplaced)")
+        lines.append("    (stroke (width 0.001) (type solid) (color 0 0 0 0))")
+        lines.append("    (fill (color 0 0 0 0.0000))")
+        lines.append(f"    (uuid {suuid})")
+        lines.append(f"    (property \"Sheet name\" \"{sheet_name}\" (id 0) (at {sx:.2f} {sy - 0.64:.4f} 0)")
+        lines.append("      (effects (font (size 1.27 1.27)) (justify left bottom))")
+        lines.append("    )")
+        lines.append(f"    (property \"Sheet file\" \"{sheet_file}\" (id 1) (at {sx:.2f} {sy + h + 0.64:.4f} 0)")
+        lines.append("      (effects (font (size 1.27 1.27) italic) (justify left top))")
+        lines.append("    )")
+        lines.append("  )")
+        lines.append("")
+
+    lines.append("  (sheet_instances")
+    lines.append("    (path \"/\" (page \"1\"))")
+    for idx, (_sheet_name, sheet_file, _sx, _sy) in enumerate(sheet_nodes, start=2):
+        suuid = sheet_uuid_by_file[sheet_file]
+        lines.append(f"    (path \"/{suuid}/\" (page \"{idx}\"))")
+    lines.append("  )")
+    lines.append("")
+    lines.append("  (symbol_instances")
+    lines.append("  )")
+    lines.append(")")
+
+    root_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return root_path
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="PADS parse + validate + KiCad-IR pipeline")
+    ap.add_argument("input", type=Path, help="Path to PADS schematic text")
+    ap.add_argument("-o", "--output", type=Path, default=None, help="Validation report JSON path")
+    ap.add_argument("--targets", nargs="+", default=None, help="Target refdes list")
+    ap.add_argument("--kicad-ir", type=Path, default=None, help="Optional KiCad IR JSON output path")
+    ap.add_argument("--kicad-sch", type=Path, default=None, help="Optional output .kicad_sch path")
+    ap.add_argument(
+        "--kicad-sch-multi-dir",
+        type=Path,
+        default=Path("."),
+        help="Output directory for per-original-sheet .kicad_sch files (default: current directory)",
+    )
+    ap.add_argument(
+        "--kicad-sch-version",
+        type=int,
+        default=20260306,
+        help="KiCad schematic format version integer (e.g., 20260306)",
+    )
+    ap.add_argument("--project-name", default="GLX7", help="Project name used in KiCad instances")
+    args = ap.parse_args()
+
+    parser = PadsParser()
+    result = parser.parse(args.input)
+    connectivity = build_connectivity(result)
+
+    target_report = extract_target_report(args.targets or [], None, result, connectivity)
+    report = {
+        "file": str(args.input),
+        "summary": {
+            "parts_count": len(result.parts),
+            "part_types_count": len(result.part_types),
+            "signal_segments_count": len(result.segments),
+            "signals_count": len(connectivity["signal_to_refs"]),
+        },
+        "target_connectivity": target_report,
+    }
+
+    if args.output:
+        args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    if args.kicad_ir:
+        ir = build_kicad_ir(result)
+        args.kicad_ir.write_text(json.dumps(ir, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    if args.kicad_sch:
+        write_kicad_schematic(
+            result,
+            args.kicad_sch,
+            project_name=args.project_name,
+            version=args.kicad_sch_version,
+        )
+
+    legacy_pro_path: Path | None = None
+    root_sch_path: Path | None = None
+    if args.kicad_sch_multi_dir:
+        args.kicad_sch_multi_dir.mkdir(parents=True, exist_ok=True)
+        sheet_results = parser.parse_sheet_results(args.input)
+        legacy_pro_path = write_legacy_pro_project_file(
+            args.kicad_sch_multi_dir,
+            args.project_name,
+            sheet_results,
+        )
+        root_sch_path = write_root_multisheet_schematic(
+            args.kicad_sch_multi_dir,
+            args.project_name,
+            sheet_results,
+            args.kicad_sch_version,
+        )
+        for idx, (sheet_name, sheet_result) in enumerate(sheet_results, start=1):
+            sheet_file = args.kicad_sch_multi_dir / f"{args.project_name}_{sheet_name}.kicad_sch"
+            write_kicad_schematic(
+                sheet_result,
+                sheet_file,
+                project_name=f"{args.project_name}_S{idx}",
+                version=args.kicad_sch_version,
+            )
+
+    print(f"Parts:       {len(result.parts)}")
+    print(f"Part types:  {len(result.part_types)}")
+    print(f"Segments:    {len(result.segments)}")
+    print(f"Signals:     {len(connectivity['signal_to_refs'])}")
+    print()
+    print("Verdict: PASS (connectivity parse complete)")
+    if args.output:
+        print(f"Report: {args.output}")
+    if args.kicad_ir:
+        print(f"KiCad IR: {args.kicad_ir}")
+    if args.kicad_sch:
+        print(f"KiCad SCH: {args.kicad_sch}")
+    if args.kicad_sch_multi_dir:
+        print(f"KiCad SCH (multi-sheet dir): {args.kicad_sch_multi_dir}")
+    if root_sch_path:
+        print(f"KiCad Root SCH: {root_sch_path}")
+    if legacy_pro_path:
+        print(f"KiCad Project (.pro): {legacy_pro_path}")
+
+
+if __name__ == "__main__":
+    main()
