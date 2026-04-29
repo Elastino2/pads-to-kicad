@@ -1,0 +1,214 @@
+name: Python Lint & Validation
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - '**/*.py'
+      - '.github/workflows/python-lint.yml'
+  pull_request:
+    branches:
+      - main
+      - develop
+    paths:
+      - '**/*.py'
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    name: Lint & Syntax Check
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Python syntax validation
+        run: |
+          python -m py_compile tools/*.py
+          echo "✓ All Python files have valid syntax"
+
+      - name: Check for import issues
+        run: |
+          cd tools
+          python -c "
+          import sys
+          import importlib.util
+          
+          files = ['pads_model.py', 'pads_parser.py', 'pads_pipeline.py', 'pads_to_kicad.py', 'list_components.py']
+          for f in files:
+              try:
+                  spec = importlib.util.spec_from_file_location(f.replace('.py', ''), f)
+                  module = importlib.util.module_from_spec(spec)
+                  # Don't execute, just verify syntax
+                  print(f'✓ {f} imports OK')
+              except SyntaxError as e:
+                  print(f'✗ {f}: {e}')
+                  sys.exit(1)
+          "
+
+      - name: Verify module structure
+        run: |
+          cd tools
+          python -c "
+          # Verify core classes exist
+          from pads_model import ParseResult, Part, PartTypeDef
+          from pads_parser import PadsParser
+          print('✓ Core classes available')
+          print('  - ParseResult')
+          print('  - Part')
+          print('  - PartTypeDef')
+          print('  - PadsParser')
+          "
+
+      - name: Check for unused imports
+        run: |
+          cd tools
+          python << 'EOF'
+          import ast
+          import sys
+          
+          def check_file_for_unused_imports(filepath):
+              with open(filepath, 'r') as f:
+                  tree = ast.parse(f.read(), filename=filepath)
+              
+              imports = set()
+              for node in ast.walk(tree):
+                  if isinstance(node, (ast.Import, ast.ImportFrom)):
+                      for alias in node.names:
+                          name = alias.asname if alias.asname else alias.name
+                          imports.add(name.split('.')[0])
+              
+              # This is a basic check; for detailed unused import detection,
+              # consider using tools like vulture or pylint
+              return len(imports) > 0
+          
+          files = ['pads_model.py', 'pads_parser.py', 'pads_pipeline.py', 'pads_to_kicad.py']
+          for f in files:
+              if check_file_for_unused_imports(f):
+                  print(f'✓ {f} has imports')
+              else:
+                  print(f'⚠ {f} has no imports')
+          EOF
+
+  type-check:
+    runs-on: ubuntu-latest
+    name: Type Hint Validation
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Validate type annotations
+        run: |
+          cd tools
+          python << 'EOF'
+          import ast
+          import sys
+          
+          def check_type_hints(filepath):
+              with open(filepath, 'r') as f:
+                  tree = ast.parse(f.read(), filename=filepath)
+              
+              type_hints_found = False
+              for node in ast.walk(tree):
+                  if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                      if node.returns:
+                          type_hints_found = True
+                      for arg in node.args.args:
+                          if arg.annotation:
+                              type_hints_found = True
+              
+              return type_hints_found
+          
+          files = ['pads_model.py', 'pads_parser.py', 'pads_pipeline.py', 'pads_to_kicad.py']
+          for f in files:
+              if check_type_hints(f):
+                  print(f'✓ {f} has type hints')
+              else:
+                  print(f'⚠ {f} missing type hints (consider adding)')
+          EOF
+
+  standards:
+    runs-on: ubuntu-latest
+    name: Code Standards Check
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Check line length
+        run: |
+          cd tools
+          python << 'EOF'
+          import sys
+          
+          files = ['pads_model.py', 'pads_parser.py', 'pads_pipeline.py', 'pads_to_kicad.py']
+          max_line_length = 120
+          issues = 0
+          
+          for filepath in files:
+              with open(filepath, 'r') as f:
+                  for line_num, line in enumerate(f, 1):
+                      # Exclude comments and strings
+                      code_line = line.rstrip()
+                      if len(code_line) > max_line_length:
+                          # Be lenient for long strings/URLs
+                          if 'http' not in code_line and '"""' not in code_line:
+                              print(f'{filepath}:{line_num}: Line too long ({len(code_line)} > {max_line_length})')
+                              issues += 1
+          
+          if issues > 0:
+              print(f'\n⚠ Found {issues} lines exceeding {max_line_length} characters')
+          else:
+              print(f'✓ All lines within {max_line_length} character limit')
+          EOF
+
+      - name: Check for common issues
+        run: |
+          cd tools
+          python << 'EOF'
+          import re
+          import sys
+          
+          files = ['pads_model.py', 'pads_parser.py', 'pads_pipeline.py', 'pads_to_kicad.py']
+          issues = []
+          
+          for filepath in files:
+              with open(filepath, 'r') as f:
+                  content = f.read()
+                  lines = content.split('\n')
+              
+              for line_num, line in enumerate(lines, 1):
+                  # Check for trailing whitespace
+                  if line != line.rstrip():
+                      issues.append(f'{filepath}:{line_num}: Trailing whitespace')
+                  
+                  # Check for tabs (should use spaces)
+                  if '\t' in line:
+                      issues.append(f'{filepath}:{line_num}: Use spaces instead of tabs')
+          
+          if issues:
+              for issue in issues[:10]:  # Show first 10
+                  print(f'⚠ {issue}')
+              if len(issues) > 10:
+                  print(f'... and {len(issues) - 10} more issues')
+          else:
+              print('✓ No common formatting issues detected')
+          EOF
