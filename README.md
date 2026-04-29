@@ -53,3 +53,7 @@ output/
 | `list_components.py` | BOM / component listing utility |
 
 See [ARCHITECTURE.md](../ARCHITECTURE.md) for detailed module design, parsing rules, and data flow diagrams.
+
+## Limitation
+* No symbols are imported.
+* Need lots of improvement to annotation handling
