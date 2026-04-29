@@ -22,14 +22,7 @@ The PADS to KiCad converter is a Python-based tool that transforms PADS ASCII sc
 ## Usage
 
 ```bash
-# Single-sheet output
-python tools/pads_pipeline.py exported_from_pads_to_ascii.txt
-
-# Multi-sheet output (recommended)
-python tools/pads_pipeline.py \
-  --kicad-sch-multi-dir output/ \
-  --project-name KiCad \
-  exported_from_pads_to_ascii.txt
+python pads_pipeline.py exported_from_pads_to_ascii.txt
 ```
 
 **Output:**
