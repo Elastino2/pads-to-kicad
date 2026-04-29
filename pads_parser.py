@@ -17,8 +17,6 @@ from pads_model import (
     TextAnnotation,
     is_int,
     is_node,
-    is_section_header,
-    looks_like_part_header,
     looks_like_parttype_header,
     parse_node,
 )
@@ -40,11 +38,7 @@ class PadsParser:
         return data.decode("latin-1", errors="replace").splitlines()
 
     def _sheet_markers(self, lines: list[str]) -> list[int]:
-        return [
-            i
-            for i, line in enumerate(lines)
-            if line.startswith("*CAE*") and "GENERAL PARAMETERS FOR THE SHEET" in line
-        ]
+        return [i for i, line in enumerate(lines) if line.strip().startswith("*SHT*")]
 
     def _handle_file_signature(self, lines: list[str]) -> None:
         """Validate the leading *PADS-LOGIC-V2007.0-CP949* style header.
@@ -95,9 +89,12 @@ class PadsParser:
         if len(parts) > 3:
             self.source_charset_hint = parts[3]
 
+    def _extract_section_header(self, text: str) -> str | None:
+        m = re.match(r"^\*[^*]+\*", text)
+        return m.group(0) if m else None
+
     def _is_section_token(self, text: str) -> bool:
-        tok = text.split()[0] if text.split() else ""
-        return bool(re.fullmatch(r"\*\S+\*", tok))
+        return self._extract_section_header(text) is not None
 
     def _parse_sht_entry(self, line: str, line_no: int) -> tuple[int | None, str | None]:
         """Parse one SHT tuple line.
@@ -143,7 +140,9 @@ class PadsParser:
             if not self._is_section_token(st):
                 continue
 
-            tok = st.split()[0]
+            tok = self._extract_section_header(st)
+            if tok is None:
+                continue
             if cur_name is not None and cur_start is not None:
                 sections.append((cur_name, cur_start, i))
             cur_name = tok
@@ -153,6 +152,24 @@ class PadsParser:
             sections.append((cur_name, cur_start, len(lines)))
 
         return sections
+
+    def _is_part_header_line(self, text: str) -> bool:
+        if self._is_section_token(text):
+            return False
+
+        toks = text.split()
+        if len(toks) < 6:
+            return False
+
+        refdes, part_type = toks[0], toks[1]
+        if not refdes or not (refdes[0].isalnum() or refdes[0] in {"_", "$"}):
+            return False
+        if refdes.startswith("@@@") or "." in refdes:
+            return False
+        if part_type.startswith('"'):
+            return False
+
+        return all(is_int(toks[i]) for i in range(2, 6))
 
     def _parse_parttype_section(self, lines: list[str], start: int, end: int, result: ParseResult) -> None:
         i = start + 1
@@ -250,19 +267,17 @@ class PadsParser:
         start: int,
         end: int,
         result: ParseResult,
-        sht_entries: list[tuple[int, int | None, str | None]],
+        active_sheet_no: int | None,
+        active_sheet_name: str | None,
     ) -> None:
         i = start + 1
-        active_idx = 0
-        active_sheet_no: int | None = None
-        active_sheet_name: str | None = None
         while i < end:
             text = lines[i].strip()
             if not text:
                 i += 1
                 continue
 
-            if looks_like_part_header(text):
+            if self._is_part_header_line(text):
                 hdr = text.split()
                 refdes, part_type = hdr[0], hdr[1]
                 raw_x = int(hdr[2]) if len(hdr) > 3 and is_int(hdr[2]) else None
@@ -271,12 +286,6 @@ class PadsParser:
                 raw_mirror = int(hdr[5]) if len(hdr) > 5 and is_int(hdr[5]) else None
 
                 part_line = i + 1
-                while active_idx < len(sht_entries) and sht_entries[active_idx][0] <= part_line:
-                    _ln, s_no, s_name = sht_entries[active_idx]
-                    active_sheet_no = s_no
-                    active_sheet_name = s_name
-                    active_idx += 1
-
                 part = Part(
                     refdes=refdes,
                     part_type=part_type,
@@ -291,7 +300,7 @@ class PadsParser:
                 i += 1
                 while i < end:
                     st = lines[i].strip()
-                    if st and looks_like_part_header(st):
+                    if st and self._is_part_header_line(st):
                         break
                     # Detect REF-DES annotation offset line (numeric tokens, next line == "REF-DES")
                     if (
@@ -314,6 +323,77 @@ class PadsParser:
 
             i += 1
 
+    def _dispatch_section(
+        self,
+        sec_name: str,
+        lines: list[str],
+        start: int,
+        end: int,
+        result: ParseResult,
+        sheet_no: int | None,
+        sheet_name: str | None,
+    ) -> None:
+        if sec_name.startswith("*PADS-"):
+            return
+        if sec_name == "*SIGNAL*":
+            self._parse_signal_section(lines, start, end, result)
+            return
+        if sec_name == "*PARTTYPE*":
+            self._parse_parttype_section(lines, start, end, result)
+            return
+        if sec_name == "*PART*":
+            self._parse_part_section(lines, start, end, result, sheet_no, sheet_name)
+            return
+        if sec_name == "*TEXT*":
+            self._parse_text_section(lines, start, end, result)
+            return
+        if sec_name == "*LINES*":
+            self._parse_lines_section(lines, start, end, result)
+            return
+        if sec_name == "*TIEDOTS*":
+            self._parse_tiedots_section(lines, start, end, result)
+            return
+        if sec_name in (
+            "*SHT*",
+            "*SCH*",
+            "*REMARK*",
+            "*MISC*",
+            "*CAM*",
+            "*CONNECTION*",
+            "*FIELDS*",
+            "*CAE*",
+            "*CAEDECAL*",
+            "*BUSSES*",
+            "*OFFPAGE REFS*",
+            "*NETNAMES*",
+            "*END*",
+        ):
+            return
+
+        loc = f"line {start + 1}"
+        if sheet_no is not None or sheet_name is not None:
+            loc = f"sheet {sheet_name or '?'} ({sheet_no if sheet_no is not None else '?'}) line {start + 1}"
+        warnings.warn(
+            f"Unhandled section header {sec_name} at {loc}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+
+    def _parse_sht_block(
+        self,
+        lines: list[str],
+        sections: list[tuple[str, int, int]],
+        block_start: int,
+        block_end: int,
+        result: ParseResult,
+    ) -> None:
+        sheet_no, sheet_name = self._parse_sht_entry(lines[block_start], block_start + 1)
+
+        for sec_name, start, end in sections:
+            if start <= block_start or start >= block_end:
+                continue
+            self._dispatch_section(sec_name, lines, start, min(end, block_end), result, sheet_no, sheet_name)
+
     def _parse_text_section(self, lines: list[str], start: int, end: int, result: ParseResult) -> None:
         i = start + 1
         while i < end:
@@ -321,11 +401,22 @@ class PadsParser:
             if not text:
                 i += 1
                 continue
-
-            toks = text.split()
+            # raw_x raw_y raw_rotation raw_mirror raw_style raw_size unknown "font name"
+            # Split carefully to handle quoted font name at the end
+            match = re.match(r'^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+"([^"]*)"', text)
+            if not match:
+                i += 1
+                continue
+            toks = list(match.groups())
             if len(toks) >= 2 and is_int(toks[0]) and is_int(toks[1]):
                 raw_x = int(toks[0])
                 raw_y = int(toks[1])
+                if(int(toks[6])!=0):
+                    warnings.warn(
+                        f"Not implemented: text annotation with nonzero rotation/mirror at line {i + 1}",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
                 raw_style = int(toks[4]) if len(toks) > 4 and is_int(toks[4]) else None
                 raw_size = int(toks[5]) if len(toks) > 5 and is_int(toks[5]) else None
 
@@ -398,7 +489,7 @@ class PadsParser:
                 continue
 
             toks = text.split()
-            if len(toks) >= 3 and toks[0].startswith("@@@D") and is_int(toks[1]) and is_int(toks[2]):
+            if toks[0].startswith("@@@D") and is_int(toks[1]) and is_int(toks[2]):
                 result.tiedots.append(TieDot(raw_x=int(toks[1]), raw_y=int(toks[2]), line=i + 1))
             i += 1
 
@@ -406,56 +497,15 @@ class PadsParser:
         result = ParseResult()
         sections = self._split_sections(lines)
 
-        # Build ordered sheet context markers from *SHT* tuples.
-        sht_entries: list[tuple[int, int | None, str | None]] = []
-        for sec_name, start, end in sections:
-            if sec_name != "*SHT*":
-                continue
+        sht_sections = [(start, end) for sec_name, start, end in sections if sec_name == "*SHT*"]
+        if not sht_sections:
+            for sec_name, start, end in sections:
+                self._dispatch_section(sec_name, lines, start, end, result, None, None)
+            return result
 
-            s_no, s_name = self._parse_sht_entry(lines[start], start + 1)
-            if s_no is not None or s_name is not None:
-                sht_entries.append((start + 1, s_no, s_name))
-
-            j = start + 1
-            while j < end:
-                st = lines[j].strip()
-                if not st:
-                    j += 1
-                    continue
-                s_no, s_name = self._parse_sht_entry(st, j + 1)
-                if s_no is not None or s_name is not None:
-                    sht_entries.append((j + 1, s_no, s_name))
-                j += 1
-
-        sht_entries.sort(key=lambda x: x[0])
-
-        for sec_name, start, end in sections:
-            if sec_name.startswith("*PADS-"):
-                # File signature block already handled by _handle_file_signature().
-                continue
-            if sec_name == "*SIGNAL*":
-                self._parse_signal_section(lines, start, end, result)
-            elif sec_name == "*PARTTYPE*":
-                self._parse_parttype_section(lines, start, end, result)
-            elif sec_name == "*PART*":
-                self._parse_part_section(lines, start, end, result, sht_entries)
-            elif sec_name == "*TEXT*":
-                self._parse_text_section(lines, start, end, result)
-            elif sec_name == "*LINES*":
-                self._parse_lines_section(lines, start, end, result)
-            elif sec_name == "*TIEDOTS*":
-                self._parse_tiedots_section(lines, start, end, result)
-            elif sec_name == "*SHT*":
-                # Sheet context already consumed into sht_entries.
-                continue
-            elif sec_name in ("*SCH*", "*REMARK*", "*MISC*", "*CAM*", "*FIELDS*", "*CAE*", "*CAEDECAL*", "*BUSSES*", "*END*"):
-                continue
-            else:
-                warnings.warn(
-                    f"Unhandled section header {sec_name} at line {start + 1}",
-                    RuntimeWarning,
-                    stacklevel=2,
-                )
+        for idx, (sht_start, _sht_end) in enumerate(sht_sections):
+            next_sht_start = sht_sections[idx + 1][0] if idx + 1 < len(sht_sections) else len(lines)
+            self._parse_sht_block(lines, sections, sht_start, next_sht_start, result)
 
         return result
 
@@ -483,7 +533,13 @@ class PadsParser:
             start = boundaries[idx]
             end = boundaries[idx + 1]
             sheet_lines = lines[start:end]
-            sheet_name = f"sheet_{idx + 1}"
+            sheet_no, sheet_title = self._parse_sht_entry(lines[start], start + 1)
+            if sheet_title:
+                sheet_name = sheet_title
+            elif sheet_no is not None:
+                sheet_name = f"sheet_{sheet_no}"
+            else:
+                sheet_name = f"sheet_{idx + 1}"
             out.append((sheet_name, self._parse_lines(sheet_lines)))
 
         return out
