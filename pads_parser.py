@@ -15,10 +15,6 @@ from pads_model import (
     Segment,
     TieDot,
     TextAnnotation,
-    is_int,
-    is_node,
-    looks_like_parttype_header,
-    parse_node,
 )
 
 
@@ -106,7 +102,7 @@ class PadsParser:
         if len(toks) < 3 or toks[0] != "*SHT*":
             return None, None
 
-        sheet_no = int(toks[1]) if is_int(toks[1]) else None
+        sheet_no = int(toks[1]) if self.is_int(toks[1]) else None
         sheet_name = toks[2]
 
         if len(toks) > 3 and toks[3] != "-1":
@@ -153,6 +149,69 @@ class PadsParser:
 
         return sections
 
+    def is_int(self, token: str) -> bool:
+        return bool(re.fullmatch(r"[-+]?\d+", token))
+
+    def is_node(self, token: str) -> bool:
+        if token.startswith("@@@"):
+            return True
+        if "." in token:
+            return True
+        return bool(re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", token))
+
+    def is_section_header(self, text: str) -> bool:
+        return bool(re.fullmatch(r"\*[A-Z0-9_]+\*(?:\s+.*)?", text))
+
+    def looks_like_part_header(self, text: str) -> bool:
+        tokens = text.split()
+        if len(tokens) < 6:
+            return False
+        if not (tokens[0][0].isalpha() or tokens[0][0] == "_"):
+            return False
+        if tokens[0].startswith("@@@") or "." in tokens[0]:
+            return False
+        if tokens[1].startswith('"') or tokens[1][0].isdigit():
+            return False
+        return any(self.is_int(tok) for tok in tokens[2:6])
+
+    def parse_resistance_ohm(self, spec: str) -> float | None:
+        m = re.search(r"([\d.]+)\s*([KkMmRr]?)\s*(?:OHM|ohm)?", spec)
+        if not m:
+            return None
+        try:
+            val = float(m.group(1))
+        except ValueError:
+            return None
+        unit = m.group(2).upper()
+        if unit == "K":
+            val *= 1_000
+        elif unit == "M":
+            val *= 1_000_000
+        return val
+
+    # PADS part-class tokens per format specification
+    _PARTTYPE_CLASSES = frozenset({"RES", "CAP", "IND", "TTL", "UND", "U", "PWR", "GND"})
+
+    def _is_parttype_header_line(self, text: str) -> bool:
+        """Deterministic PARTTYPE entry header detector.
+
+        Rules:
+        - 3+ tokens
+        - First token starts with alpha, '_', or '$' (not '@@')
+        - Second token is a recognised PADS part-class keyword
+        """
+        if self._is_section_token(text):
+            return False
+        toks = text.split()
+        if len(toks) < 3:
+            return False
+        refdes = toks[0]
+        if not refdes or not (refdes[0].isalpha() or refdes[0] in ("_", "$")):
+            return False
+        if refdes.startswith("@@@"):
+            return False
+        return toks[1] in self._PARTTYPE_CLASSES
+
     def _is_part_header_line(self, text: str) -> bool:
         if self._is_section_token(text):
             return False
@@ -169,7 +228,7 @@ class PadsParser:
         if part_type.startswith('"'):
             return False
 
-        return all(is_int(toks[i]) for i in range(2, 6))
+        return all(self.is_int(toks[i]) for i in range(2, 6))
 
     def _parse_parttype_section(self, lines: list[str], start: int, end: int, result: ParseResult) -> None:
         i = start + 1
@@ -178,7 +237,7 @@ class PadsParser:
             if not text or text.startswith("*"):
                 i += 1
                 continue
-            if looks_like_parttype_header(text):
+            if self._is_parttype_header_line(text):
                 hdr = text.split()
                 type_name = hdr[0]
                 part_class = hdr[1] if len(hdr) > 1 else "UND"
@@ -190,7 +249,7 @@ class PadsParser:
                     if st.startswith("TIMESTAMP"):
                         i += 1
                         break
-                    if looks_like_parttype_header(st):
+                    if self._is_parttype_header_line(st):
                         break
                     i += 1
 
@@ -199,12 +258,12 @@ class PadsParser:
                     if not st:
                         i += 1
                         continue
-                    if looks_like_parttype_header(st):
+                    if self._is_parttype_header_line(st):
                         break
                     first = st.split()[0] if st.split() else ""
                     if first in {"GATE", "PWR", "GND", "OFF"}:
                         gate_toks = st.split()
-                        pin_count = int(gate_toks[2]) if len(gate_toks) > 2 and is_int(gate_toks[2]) else 0
+                        pin_count = int(gate_toks[2]) if len(gate_toks) > 2 and self.is_int(gate_toks[2]) else 0
                         i += 1
                         if i < len(lines):
                             i += 1
@@ -239,7 +298,7 @@ class PadsParser:
                 continue
 
             toks = st.split()
-            if len(toks) >= 4 and is_node(toks[0]) and is_node(toks[1]) and is_int(toks[2]):
+            if len(toks) >= 4 and self.is_node(toks[0]) and self.is_node(toks[1]) and self.is_int(toks[2]):
                 node_a, node_b = toks[0], toks[1]
                 coord_count = int(toks[2])
                 seg_line = i + 1
@@ -249,7 +308,7 @@ class PadsParser:
                     if i >= end:
                         break
                     ct = lines[i].strip().split()
-                    if len(ct) >= 2 and is_int(ct[0]) and is_int(ct[1]):
+                    if len(ct) >= 2 and self.is_int(ct[0]) and self.is_int(ct[1]):
                         coords.append((int(ct[0]), int(ct[1])))
                         i += 1
                     else:
@@ -280,10 +339,10 @@ class PadsParser:
             if self._is_part_header_line(text):
                 hdr = text.split()
                 refdes, part_type = hdr[0], hdr[1]
-                raw_x = int(hdr[2]) if len(hdr) > 3 and is_int(hdr[2]) else None
-                raw_y = int(hdr[3]) if len(hdr) > 3 and is_int(hdr[3]) else None
-                raw_rotation = int(hdr[4]) if len(hdr) > 4 and is_int(hdr[4]) else None
-                raw_mirror = int(hdr[5]) if len(hdr) > 5 and is_int(hdr[5]) else None
+                raw_x = int(hdr[2]) if len(hdr) > 3 and self.is_int(hdr[2]) else None
+                raw_y = int(hdr[3]) if len(hdr) > 3 and self.is_int(hdr[3]) else None
+                raw_rotation = int(hdr[4]) if len(hdr) > 4 and self.is_int(hdr[4]) else None
+                raw_mirror = int(hdr[5]) if len(hdr) > 5 and self.is_int(hdr[5]) else None
 
                 part_line = i + 1
                 part = Part(
@@ -309,7 +368,7 @@ class PadsParser:
                         and lines[i + 1].strip() == "REF-DES"
                     ):
                         toks = st.split()
-                        if len(toks) >= 3 and is_int(toks[0]) and is_int(toks[1]) and is_int(toks[2]):
+                        if len(toks) >= 3 and self.is_int(toks[0]) and self.is_int(toks[1]) and self.is_int(toks[2]):
                             part.ref_ann_dx = int(toks[0])
                             part.ref_ann_dy = int(toks[1])
                             part.ref_ann_rotation = int(toks[2])
@@ -408,7 +467,7 @@ class PadsParser:
                 i += 1
                 continue
             toks = list(match.groups())
-            if len(toks) >= 2 and is_int(toks[0]) and is_int(toks[1]):
+            if len(toks) >= 2 and self.is_int(toks[0]) and self.is_int(toks[1]):
                 raw_x = int(toks[0])
                 raw_y = int(toks[1])
                 if(int(toks[6])!=0):
@@ -417,8 +476,8 @@ class PadsParser:
                         RuntimeWarning,
                         stacklevel=2,
                     )
-                raw_style = int(toks[4]) if len(toks) > 4 and is_int(toks[4]) else None
-                raw_size = int(toks[5]) if len(toks) > 5 and is_int(toks[5]) else None
+                raw_style = int(toks[4]) if len(toks) > 4 and self.is_int(toks[4]) else None
+                raw_size = int(toks[5]) if len(toks) > 5 and self.is_int(toks[5]) else None
 
                 text_line = ""
                 if i + 1 < end:
@@ -449,7 +508,7 @@ class PadsParser:
                 continue
 
             toks = text.split()
-            if len(toks) >= 4 and toks[0].startswith("$$DRW") and is_int(toks[2]) and is_int(toks[3]):
+            if len(toks) >= 4 and toks[0].startswith("$$DRW") and self.is_int(toks[2]) and self.is_int(toks[3]):
                 base_x = int(toks[2])
                 base_y = int(toks[3])
                 entry_line = i + 1
@@ -461,14 +520,14 @@ class PadsParser:
                 if not st or st[0] not in {"OPEN", "CLOSED"}:
                     continue
 
-                point_count = int(st[1]) if len(st) > 1 and is_int(st[1]) else 0
+                point_count = int(st[1]) if len(st) > 1 and self.is_int(st[1]) else 0
                 i += 1
                 pts: list[tuple[int, int]] = []
                 for _ in range(point_count):
                     if i >= end:
                         break
                     pt = lines[i].strip().split()
-                    if len(pt) >= 2 and is_int(pt[0]) and is_int(pt[1]):
+                    if len(pt) >= 2 and self.is_int(pt[0]) and self.is_int(pt[1]):
                         pts.append((base_x + int(pt[0]), base_y + int(pt[1])))
                         i += 1
                         continue
@@ -489,7 +548,7 @@ class PadsParser:
                 continue
 
             toks = text.split()
-            if toks[0].startswith("@@@D") and is_int(toks[1]) and is_int(toks[2]):
+            if toks[0].startswith("@@@D") and self.is_int(toks[1]) and self.is_int(toks[2]):
                 result.tiedots.append(TieDot(raw_x=int(toks[1]), raw_y=int(toks[2]), line=i + 1))
             i += 1
 
@@ -544,6 +603,20 @@ class PadsParser:
 
         return out
 
+def parse_node(node: str) -> tuple[str | None, str | None]:
+    """Parse a node reference into component reference and pin number.
+    
+    Examples:
+        "N$5" → (None, None)
+        "U5.2" → ("U5", "2")
+        "GND" → ("GND", None)
+    """
+    if node.startswith("@@@"):
+        return None, None
+    if "." in node:
+        ref, pin = node.split(".", 1)
+        return ref, pin
+    return node, None
 
 def build_connectivity(result: ParseResult) -> dict[str, Any]:
     signal_to_refs: dict[str, set[str]] = defaultdict(set)

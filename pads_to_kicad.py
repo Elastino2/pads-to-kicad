@@ -6,7 +6,8 @@ from pathlib import Path
 from statistics import median
 from typing import Any
 
-from pads_model import ParseResult, parse_node
+from pads_model import ParseResult
+from pads_parser import parse_node
 
 
 def build_kicad_ir(result: ParseResult) -> dict[str, Any]:
