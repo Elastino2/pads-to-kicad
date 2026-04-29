@@ -54,7 +54,7 @@ def _uuid() -> str:
 
 
 def _sanitize_symbol_name(name: str) -> str:
-    out = []
+    out: list[str] = []
     for ch in name:
         if ch.isalnum() or ch in ("_", "-", "."):
             out.append(ch)
