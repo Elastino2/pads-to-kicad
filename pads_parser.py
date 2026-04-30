@@ -163,9 +163,6 @@ class PadsParser:
             return True
         return bool(re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", token))
 
-    def is_section_header(self, text: str) -> bool:
-        return bool(re.fullmatch(r"\*[A-Z0-9_]+\*(?:\s+.*)?", text))
-
     def looks_like_part_header(self, text: str) -> bool:
         tokens = text.split()
         if len(tokens) < 6:
