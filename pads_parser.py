@@ -558,20 +558,19 @@ class PadsParser:
 
         return result
 
-    def parse(self, file_path: Path) -> ParseResult:
-        lines = self._read_lines(file_path)
-        self._handle_file_signature(lines)
-        return self._parse_lines(lines)
+    def parse(self, file_path: Path, split_sheets: bool = False) -> ParseResult | list[tuple[str, ParseResult]]:
+        """Parse PADS source file.
 
-    def parse_sheet_results(self, file_path: Path) -> list[tuple[str, ParseResult]]:
-        """Parse each original PADS sheet block independently.
-
-        Returns list of (sheet_name, ParseResult), preserving source order.
+        - split_sheets=False: returns one aggregated ParseResult.
+        - split_sheets=True: returns list[(sheet_name, ParseResult)] preserving source order.
         """
         lines = self._read_lines(file_path)
         self._handle_file_signature(lines)
-        markers = self._sheet_markers(lines)
 
+        if not split_sheets:
+            return self._parse_lines(lines)
+
+        markers = self._sheet_markers(lines)
         if not markers:
             return [("sheet_1", self._parse_lines(lines))]
 

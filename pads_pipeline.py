@@ -183,7 +183,7 @@ def main() -> None:
     root_sch_path: Path | None = None
     if args.kicad_sch_multi_dir:
         args.kicad_sch_multi_dir.mkdir(parents=True, exist_ok=True)
-        sheet_results = parser.parse_sheet_results(args.input)
+        sheet_results = parser.parse(args.input, split_sheets=True)
         legacy_pro_path = write_legacy_pro_project_file(
             args.kicad_sch_multi_dir,
             args.project_name,
