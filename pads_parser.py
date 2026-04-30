@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import re
 import warnings
-from collections import defaultdict
 from pathlib import Path
-from typing import Any, cast
 
 from pads_model import (
     GraphicPolyline,
