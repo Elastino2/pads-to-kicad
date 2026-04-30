@@ -554,14 +554,15 @@ class PadsParser:
 
         return result
 
-    def parse(self, file_path: Path) -> list[tuple[str, ParseResult]]:
+    def parse_sheets(self, file_path: Path) -> list[tuple[str, ParseResult]]:
         """Parse PADS source file and return per-sheet results in source order."""
         lines = self._read_lines(file_path)
         self._handle_file_signature(lines)
 
         markers = self._sheet_markers(lines)
-        if not markers:
-            return [("sheet_1", self._dissect_sections(lines))]
+        # raise runtime error if any *SHT* is found
+        if len(markers) == 0:
+            raise RuntimeError("No *SHT* sheet markers found in the input file, cannot proceed with parsing.")
 
         boundaries = markers + [len(lines)]
         out: list[tuple[str, ParseResult]] = []
@@ -580,6 +581,20 @@ class PadsParser:
             out.append((sheet_name, self._dissect_sections(sheet_lines)))
 
         return out
+
+    def parse(self, file_path: Path) -> ParseResult:
+        """Parse PADS source file and return one aggregated ParseResult."""
+        merged = ParseResult()
+        for _sheet_name, sheet_result in self.parse_sheets(file_path):
+            merged.parts.update(sheet_result.parts)
+            merged.part_types.update(sheet_result.part_types)
+            merged.segments.extend(sheet_result.segments)
+            for signal_name, line_nums in sheet_result.signal_lines.items():
+                merged.signal_lines[signal_name].extend(line_nums)
+            merged.text_annotations.extend(sheet_result.text_annotations)
+            merged.graphic_polylines.extend(sheet_result.graphic_polylines)
+            merged.tiedots.extend(sheet_result.tiedots)
+        return merged
 
 def parse_node(node: str) -> tuple[str | None, str | None]:
     """Parse a node reference into component reference and pin number.

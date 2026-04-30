@@ -135,20 +135,6 @@ def write_root_multisheet_schematic(
     return root_path
 
 
-def _merge_sheet_results(sheet_results: list[tuple[str, ParseResult]]) -> ParseResult:
-    merged = ParseResult()
-    for _sheet_name, sheet_result in sheet_results:
-        merged.parts.update(sheet_result.parts)
-        merged.part_types.update(sheet_result.part_types)
-        merged.segments.extend(sheet_result.segments)
-        for signal_name, line_nums in sheet_result.signal_lines.items():
-            merged.signal_lines[signal_name].extend(line_nums)
-        merged.text_annotations.extend(sheet_result.text_annotations)
-        merged.graphic_polylines.extend(sheet_result.graphic_polylines)
-        merged.tiedots.extend(sheet_result.tiedots)
-    return merged
-
-
 def main() -> None:
     ap = argparse.ArgumentParser(description="PADS parse + validate + KiCad-IR pipeline")
     ap.add_argument("input", type=Path, help="Path to PADS schematic text")
@@ -171,8 +157,8 @@ def main() -> None:
     args = ap.parse_args()
 
     parser = PadsParser()
-    sheet_results = parser.parse(args.input)
-    result = _merge_sheet_results(sheet_results)
+    result = parser.parse(args.input)
+    sheet_results = parser.parse_sheets(args.input)
     connectivity = build_connectivity(result)
 
     target_report = extract_target_report(args.targets or [], None, result, connectivity)
