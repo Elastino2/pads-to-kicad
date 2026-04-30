@@ -135,6 +135,20 @@ def write_root_multisheet_schematic(
     return root_path
 
 
+def _merge_sheet_results(sheet_results: list[tuple[str, ParseResult]]) -> ParseResult:
+    merged = ParseResult()
+    for _sheet_name, sheet_result in sheet_results:
+        merged.parts.update(sheet_result.parts)
+        merged.part_types.update(sheet_result.part_types)
+        merged.segments.extend(sheet_result.segments)
+        for signal_name, line_nums in sheet_result.signal_lines.items():
+            merged.signal_lines[signal_name].extend(line_nums)
+        merged.text_annotations.extend(sheet_result.text_annotations)
+        merged.graphic_polylines.extend(sheet_result.graphic_polylines)
+        merged.tiedots.extend(sheet_result.tiedots)
+    return merged
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="PADS parse + validate + KiCad-IR pipeline")
     ap.add_argument("input", type=Path, help="Path to PADS schematic text")
@@ -157,7 +171,8 @@ def main() -> None:
     args = ap.parse_args()
 
     parser = PadsParser()
-    result = parser.parse(args.input)
+    sheet_results = parser.parse(args.input)
+    result = _merge_sheet_results(sheet_results)
     connectivity = build_connectivity(result)
 
     target_report = extract_target_report(args.targets or [], None, result, connectivity)
@@ -175,34 +190,32 @@ def main() -> None:
     if args.output:
         args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    if args.kicad_ir:
-        ir = build_kicad_ir(result)
-        args.kicad_ir.write_text(json.dumps(ir, ensure_ascii=False, indent=2), encoding="utf-8")
 
     legacy_pro_path: Path | None = None
     root_sch_path: Path | None = None
-    if args.kicad_sch_multi_dir:
-        args.kicad_sch_multi_dir.mkdir(parents=True, exist_ok=True)
-        sheet_results = parser.parse(args.input, split_sheets=True)
-        legacy_pro_path = write_legacy_pro_project_file(
-            args.kicad_sch_multi_dir,
-            args.project_name,
-            sheet_results,
+    args.kicad_sch_multi_dir.mkdir(parents=True, exist_ok=True)
+    legacy_pro_path = write_legacy_pro_project_file(
+        args.kicad_sch_multi_dir,
+        args.project_name,
+        sheet_results,
+    )
+    root_sch_path = write_root_multisheet_schematic(
+        args.kicad_sch_multi_dir,
+        args.project_name,
+        sheet_results,
+        args.kicad_sch_version,
+    )
+    for idx, (sheet_name, sheet_result) in enumerate(sheet_results, start=1):
+        sheet_file = args.kicad_sch_multi_dir / _sheet_output_filename(args.project_name, sheet_name)
+        write_kicad_schematic(
+            sheet_result,
+            sheet_file,
+            project_name=f"{args.project_name}_S{idx}",
+            version=args.kicad_sch_version,
         )
-        root_sch_path = write_root_multisheet_schematic(
-            args.kicad_sch_multi_dir,
-            args.project_name,
-            sheet_results,
-            args.kicad_sch_version,
-        )
-        for idx, (sheet_name, sheet_result) in enumerate(sheet_results, start=1):
-            sheet_file = args.kicad_sch_multi_dir / _sheet_output_filename(args.project_name, sheet_name)
-            write_kicad_schematic(
-                sheet_result,
-                sheet_file,
-                project_name=f"{args.project_name}_S{idx}",
-                version=args.kicad_sch_version,
-            )
+    if args.kicad_ir:
+        ir = build_kicad_ir(result)
+        args.kicad_ir.write_text(json.dumps(ir, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print(f"Parts:       {len(result.parts)}")
     print(f"Part types:  {len(result.part_types)}")

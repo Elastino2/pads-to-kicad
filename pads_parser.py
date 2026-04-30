@@ -428,7 +428,7 @@ class PadsParser:
             stacklevel=2,
         )
 
-    def _parse_sht_block(
+    def _parse_sht_section(
         self,
         lines: list[str],
         sections: list[tuple[str, int, int]],
@@ -542,37 +542,26 @@ class PadsParser:
                 result.tiedots.append(TieDot(raw_x=int(toks[1]), raw_y=int(toks[2]), line=i + 1))
             i += 1
 
-    def _parse_lines(self, lines: list[str]) -> ParseResult:
+    def _dissect_sections(self, lines: list[str]) -> ParseResult:
         result = ParseResult()
         sections = self._split_sections(lines)
 
         sht_sections = [(start, end) for sec_name, start, end in sections if sec_name == "*SHT*"]
-        if not sht_sections:
-            for sec_name, start, end in sections:
-                self._dispatch_section(sec_name, lines, start, end, result, None, None)
-            return result
 
         for idx, (sht_start, _sht_end) in enumerate(sht_sections):
             next_sht_start = sht_sections[idx + 1][0] if idx + 1 < len(sht_sections) else len(lines)
-            self._parse_sht_block(lines, sections, sht_start, next_sht_start, result)
+            self._parse_sht_section(lines, sections, sht_start, next_sht_start, result)
 
         return result
 
-    def parse(self, file_path: Path, split_sheets: bool = False) -> ParseResult | list[tuple[str, ParseResult]]:
-        """Parse PADS source file.
-
-        - split_sheets=False: returns one aggregated ParseResult.
-        - split_sheets=True: returns list[(sheet_name, ParseResult)] preserving source order.
-        """
+    def parse(self, file_path: Path) -> list[tuple[str, ParseResult]]:
+        """Parse PADS source file and return per-sheet results in source order."""
         lines = self._read_lines(file_path)
         self._handle_file_signature(lines)
 
-        if not split_sheets:
-            return self._parse_lines(lines)
-
         markers = self._sheet_markers(lines)
         if not markers:
-            return [("sheet_1", self._parse_lines(lines))]
+            return [("sheet_1", self._dissect_sections(lines))]
 
         boundaries = markers + [len(lines)]
         out: list[tuple[str, ParseResult]] = []
@@ -588,7 +577,7 @@ class PadsParser:
                 sheet_name = f"sheet_{sheet_no}"
             else:
                 sheet_name = f"sheet_{idx + 1}"
-            out.append((sheet_name, self._parse_lines(sheet_lines)))
+            out.append((sheet_name, self._dissect_sections(sheet_lines)))
 
         return out
 
