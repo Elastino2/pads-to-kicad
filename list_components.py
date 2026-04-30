@@ -101,7 +101,7 @@ def main() -> None:
     args = ap.parse_args()
 
     parser = PadsParser()
-    sheet_results = parser.parse_sheets(args.sch)
+    sheet_results = parser._parse_sheets(args.sch)
 
     # Build: ref → (part_type, part_class, sheet_num, description, manufacturer, mpn)
     records: list[dict] = []

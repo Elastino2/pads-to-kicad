@@ -158,7 +158,7 @@ def main() -> None:
 
     parser = PadsParser()
     result = parser.parse(args.input)
-    sheet_results = parser.parse_sheets(args.input)
+    sheet_results = parser._parse_sheets(args.input)
     connectivity = build_connectivity(result)
 
     target_report = extract_target_report(args.targets or [], None, result, connectivity)

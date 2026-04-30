@@ -92,34 +92,6 @@ class PadsParser:
     def _is_section_token(self, text: str) -> bool:
         return self._extract_section_header(text) is not None
 
-    def _parse_sht_entry(self, line: str, line_no: int) -> tuple[int | None, str | None]:
-        """Parse one SHT tuple line.
-
-        Expected format example:
-            *SHT*   7 USB-C -1 $$$NONE
-        """
-        toks = line.strip().split()
-        if len(toks) < 3 or toks[0] != "*SHT*":
-            return None, None
-
-        sheet_no = int(toks[1]) if self.is_int(toks[1]) else None
-        sheet_name = toks[2]
-
-        if len(toks) > 3 and toks[3] != "-1":
-            warnings.warn(
-                f"Not implemented: *SHT* tuple[3]={toks[3]!r} at line {line_no} (expected '-1')",
-                RuntimeWarning,
-                stacklevel=2,
-            )
-        if len(toks) > 4 and toks[4] != "$$$NONE":
-            warnings.warn(
-                f"Not implemented: *SHT* tuple[4]={toks[4]!r} at line {line_no} (expected '$$$NONE')",
-                RuntimeWarning,
-                stacklevel=2,
-            )
-
-        return sheet_no, sheet_name
-
     def _split_sections(self, lines: list[str]) -> list[tuple[str, int, int]]:
         """Return section ranges as (header_token, start_idx, end_idx_exclusive).
 
@@ -428,21 +400,6 @@ class PadsParser:
             stacklevel=2,
         )
 
-    def _parse_sht_section(
-        self,
-        lines: list[str],
-        sections: list[tuple[str, int, int]],
-        block_start: int,
-        block_end: int,
-        result: ParseResult,
-    ) -> None:
-        sheet_no, sheet_name = self._parse_sht_entry(lines[block_start], block_start + 1)
-
-        for sec_name, start, end in sections:
-            if start <= block_start or start >= block_end:
-                continue
-            self._dispatch_section(sec_name, lines, start, min(end, block_end), result, sheet_no, sheet_name)
-
     def _parse_text_section(self, lines: list[str], start: int, end: int, result: ParseResult) -> None:
         i = start + 1
         while i < end:
@@ -542,19 +499,7 @@ class PadsParser:
                 result.tiedots.append(TieDot(raw_x=int(toks[1]), raw_y=int(toks[2]), line=i + 1))
             i += 1
 
-    def _dissect_sections(self, lines: list[str]) -> ParseResult:
-        result = ParseResult()
-        sections = self._split_sections(lines)
-
-        sht_sections = [(start, end) for sec_name, start, end in sections if sec_name == "*SHT*"]
-
-        for idx, (sht_start, _sht_end) in enumerate(sht_sections):
-            next_sht_start = sht_sections[idx + 1][0] if idx + 1 < len(sht_sections) else len(lines)
-            self._parse_sht_section(lines, sections, sht_start, next_sht_start, result)
-
-        return result
-
-    def parse_sheets(self, file_path: Path) -> list[tuple[str, ParseResult]]:
+    def _parse_sheets(self, file_path: Path) -> list[tuple[str, ParseResult]]:
         """Parse PADS source file and return per-sheet results in source order."""
         lines = self._read_lines(file_path)
         self._handle_file_signature(lines)
@@ -571,21 +516,38 @@ class PadsParser:
             start = boundaries[idx]
             end = boundaries[idx + 1]
             sheet_lines = lines[start:end]
-            sheet_no, sheet_title = self._parse_sht_entry(lines[start], start + 1)
-            if sheet_title:
-                sheet_name = sheet_title
-            elif sheet_no is not None:
-                sheet_name = f"sheet_{sheet_no}"
-            else:
-                sheet_name = f"sheet_{idx + 1}"
-            out.append((sheet_name, self._dissect_sections(sheet_lines)))
+            _sht_toks = lines[start].strip().split()
+            if _sht_toks[0] != "*SHT*" or len(_sht_toks) != 5:
+                raise RuntimeError(f"Invalid *SHT* entry at line {start + 1}: {lines[start]!r}")
+            sheet_no = int(_sht_toks[1])
+            sheet_title = _sht_toks[2]
+            if _sht_toks[3] != "-1":
+                warnings.warn(
+                    f"Not implemented: *SHT* tuple[3]={_sht_toks[3]!r} at line {start + 1} (expected '-1')",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+            if _sht_toks[4] != "$$$NONE":
+                warnings.warn(
+                    f"Not implemented: *SHT* tuple[4]={_sht_toks[4]!r} at line {start + 1} (expected '$$$NONE')",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+          
+            sheet_result = ParseResult()
+            sheet_sections = self._split_sections(sheet_lines)
+            for sec_name, sec_start, sec_end in sheet_sections:
+                if sec_start == 0:
+                    continue
+                self._dispatch_section(sec_name, sheet_lines, sec_start, sec_end, sheet_result, sheet_no, sheet_title)
+            out.append((sheet_title, sheet_result))
 
         return out
 
     def parse(self, file_path: Path) -> ParseResult:
         """Parse PADS source file and return one aggregated ParseResult."""
         merged = ParseResult()
-        for _sheet_name, sheet_result in self.parse_sheets(file_path):
+        for _sheet_name, sheet_result in self._parse_sheets(file_path):
             merged.parts.update(sheet_result.parts)
             merged.part_types.update(sheet_result.part_types)
             merged.segments.extend(sheet_result.segments)
