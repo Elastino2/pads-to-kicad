@@ -28,7 +28,7 @@ def _sheet_output_filename(project_name: str, sheet_name: str) -> str:
 def write_legacy_pro_project_file(
     output_dir: Path,
     project_name: str,
-    sheet_results: list[tuple[str, ParseResult]] | None = None,
+    sheet_results: dict[str, ParseResult] | None = None,
 ) -> Path:
     """Write a minimal legacy KiCad .pro project file."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -46,7 +46,7 @@ def write_legacy_pro_project_file(
 
     if sheet_results:
         lines.append("[sheetnames]")
-        for idx, (sheet_name, _sheet_result) in enumerate(sheet_results, start=1):
+        for idx, (sheet_name, _sheet_result) in enumerate(sheet_results.items(), start=1):
             sheet_file = _sheet_output_filename(project_name, sheet_name)
             lines.append(f"{idx}=00000000-0000-0000-0000-{idx:012d}:{sheet_file}")
 
@@ -69,7 +69,7 @@ def write_legacy_pro_project_file(
 def write_root_multisheet_schematic(
     output_dir: Path,
     project_name: str,
-    sheet_results: list[tuple[str, ParseResult]],
+    sheet_results: dict[str, ParseResult],
     version: int,
 ) -> Path:
     """Write a top-level KiCad schematic that links generated per-sheet files."""
@@ -85,7 +85,7 @@ def write_root_multisheet_schematic(
     cols = 3
 
     sheet_nodes: list[tuple[str, str, float, float]] = []
-    for idx, (sheet_name, _sheet_result) in enumerate(sheet_results, start=1):
+    for idx, (sheet_name, _sheet_result) in enumerate(sheet_results.items(), start=1):
         col = (idx - 1) % cols
         row = (idx - 1) // cols
         sx = x0 + col * dx
@@ -158,7 +158,7 @@ def main() -> None:
 
     parser = PadsParser()
     result = parser.parse(args.input)
-    sheet_results = parser._parse_sheets(args.input)
+    sheet_results = result.Sheets
     connectivity = build_connectivity(result)
 
     target_report = extract_target_report(args.targets or [], None, result, connectivity)
@@ -191,7 +191,7 @@ def main() -> None:
         sheet_results,
         args.kicad_sch_version,
     )
-    for idx, (sheet_name, sheet_result) in enumerate(sheet_results, start=1):
+    for idx, (sheet_name, sheet_result) in enumerate(sheet_results.items(), start=1):
         sheet_file = args.kicad_sch_multi_dir / _sheet_output_filename(args.project_name, sheet_name)
         write_kicad_schematic(
             sheet_result,

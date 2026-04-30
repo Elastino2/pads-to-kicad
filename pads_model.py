@@ -71,6 +71,7 @@ class TieDot:
 
 @dataclass
 class ParseResult:
+    Sheets: dict[str, ParseResult] = field(default_factory=lambda: {})
     parts: dict[str, Part] = field(default_factory=lambda: {})
     part_types: dict[str, PartTypeDef] = field(default_factory=lambda: {})
     segments: list[Segment] = field(default_factory=lambda: [])

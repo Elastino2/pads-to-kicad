@@ -101,11 +101,11 @@ def main() -> None:
     args = ap.parse_args()
 
     parser = PadsParser()
-    sheet_results = parser._parse_sheets(args.sch)
+    parse_result = parser._parse_sheets(args.sch)
 
     # Build: ref → (part_type, part_class, sheet_num, description, manufacturer, mpn)
     records: list[dict] = []
-    for sheet_idx, (sheet_name, pr) in enumerate(sheet_results, start=1):
+    for sheet_idx, (sheet_name, pr) in enumerate(parse_result.Sheets.items(), start=1):
         for ref, part in sorted(pr.parts.items()):
             ptd = pr.part_types.get(part.part_type)
             part_class = ptd.part_class if ptd else "UND"
