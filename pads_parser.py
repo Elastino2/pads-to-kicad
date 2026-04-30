@@ -247,7 +247,7 @@ class PadsParser:
             i += 1
         return result
 
-    def _parse_signal_section(self, lines: list[str], start: int, end: int, result: ParseResult) -> ParseResult:
+    def _parse_signal_section(self, sheet_no: int, lines: list[str], start: int, end: int, result: ParseResult) -> ParseResult:
         header = lines[start].strip()
         stoks = header.split()
         signal_name = stoks[1] if len(stoks) > 1 else "UNKNOWN"
@@ -264,7 +264,6 @@ class PadsParser:
             if len(toks) >= 4 and self.is_node(toks[0]) and self.is_node(toks[1]) and self.is_int(toks[2]):
                 node_a, node_b = toks[0], toks[1]
                 coord_count = int(toks[2])
-                seg_line = i + 1
                 i += 1
                 coords: list[tuple[int, int]] = []
                 for _ in range(coord_count):
@@ -277,7 +276,7 @@ class PadsParser:
                     else:
                         break
                 result.segments.append(
-                    Segment(signal=signal_name, node_a=node_a, node_b=node_b, coords=coords)
+                    Segment(sheet_no=sheet_no, signal=signal_name, node_a=node_a, node_b=node_b, coords=coords)
                 )
                 continue
 
@@ -307,7 +306,6 @@ class PadsParser:
                 raw_rotation = int(hdr[4]) if len(hdr) > 4 and self.is_int(hdr[4]) else None
                 raw_mirror = int(hdr[5]) if len(hdr) > 5 and self.is_int(hdr[5]) else None
 
-                part_line = i + 1
                 part = Part(
                     refdes=refdes,
                     part_type=part_type,
@@ -356,7 +354,7 @@ class PadsParser:
         if sec_name.startswith("*PADS-"):
             return result
         if sec_name == "*SIGNAL*":
-            return self._parse_signal_section(lines, start, end, result)
+            return self._parse_signal_section(sheet_no, lines, start, end, result)
         if sec_name == "*PARTTYPE*":
             return self._parse_parttype_section(lines, start, end, result)
         if sec_name == "*PART*":
@@ -384,8 +382,6 @@ class PadsParser:
             return result
 
         loc = f"line {start + 1}"
-        if sheet_no is not None:
-            loc = f"sheet {sheet_no} line {start + 1}"
         warnings.warn(
             f"Unhandled section header {sec_name} at {loc}",
             RuntimeWarning,
@@ -462,24 +458,19 @@ class PadsParser:
                 if i >= end:
                     continue
                 st = lines[i].strip().split()
-                if not st or st[0] not in {"OPEN", "CLOSED"}:
-                    continue
 
-                point_count = int(st[1]) if len(st) > 1 and self.is_int(st[1]) else 0
+                point_count = int(st[1])
                 i += 1
                 pts: list[tuple[int, int]] = []
                 for _ in range(point_count):
                     if i >= end:
                         break
                     pt = lines[i].strip().split()
-                    if len(pt) >= 2 and self.is_int(pt[0]) and self.is_int(pt[1]):
-                        pts.append((base_x + int(pt[0]), base_y + int(pt[1])))
-                        i += 1
-                        continue
-                    break
+                    pts.append((base_x + int(pt[0]), base_y + int(pt[1])))
+                    i += 1
+                    continue
 
-                if len(pts) >= 2:
-                    result.graphic_polylines.append(GraphicPolyline(sheet_no=sheet_no, points=pts))
+                result.graphic_polylines.append(GraphicPolyline(sheet_no=sheet_no, points=pts))
                 continue
 
             i += 1
@@ -650,7 +641,7 @@ def extract_target_report(
         target_info[original] = {
             "canonical_refdes": canonical,
             "found": part is not None,
-            "line": part.line if part else None,
+            "sheet_no": part.sheet_no if part else None,
             "part_type": part.part_type if part else None,
             "part_class": ptd.part_class if ptd else None,
             "properties": {
@@ -683,7 +674,7 @@ def build_line_evidence(result: ParseResult, focus_signals: list[str]) -> dict[s
         sig: {
             "signal_header_lines": result.signal_lines.get(sig, []),
             "segments": [
-                {"line": seg.line, "node_a": seg.node_a, "node_b": seg.node_b}
+                {"sheet_no": seg.sheet_no, "node_a": seg.node_a, "node_b": seg.node_b}
                 for seg in result.segments
                 if seg.signal == sig
             ],

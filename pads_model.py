@@ -36,6 +36,7 @@ class Part:
 
 @dataclass
 class Segment:
+    sheet_no: int
     signal: str
     node_a: str
     node_b: str
