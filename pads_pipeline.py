@@ -8,7 +8,7 @@ from pathlib import Path
 from datetime import datetime
 from uuid import uuid4
 
-from pads_parser import PadsParser, ParseResult, build_connectivity, extract_target_report
+from pads_parser import PadsParser, ParseResult
 from pads_to_kicad import build_kicad_ir, write_kicad_schematic
 
 
@@ -159,23 +159,6 @@ def main() -> None:
     parser = PadsParser()
     result = parser.parse(args.input)
     sheet_results = result.Sheets
-    connectivity = build_connectivity(result)
-
-    target_report = extract_target_report(args.targets or [], None, result, connectivity)
-    report: dict[str, object] = {
-        "file": str(args.input),
-        "summary": {
-            "parts_count": len(result.parts),
-            "part_types_count": len(result.part_types),
-            "signal_segments_count": len(result.segments),
-            "signals_count": len(connectivity["signal_to_refs"]),
-        },
-        "target_connectivity": target_report,
-    }
-
-    if args.output:
-        args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-
 
     legacy_pro_path: Path | None = None
     root_sch_path: Path | None = None
@@ -206,7 +189,6 @@ def main() -> None:
     print(f"Parts:       {len(result.parts)}")
     print(f"Part types:  {len(result.part_types)}")
     print(f"Segments:    {len(result.segments)}")
-    print(f"Signals:     {len(connectivity['signal_to_refs'])}")
     print()
     print("Verdict: PASS (connectivity parse complete)")
     if args.output:
