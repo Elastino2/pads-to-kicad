@@ -187,7 +187,7 @@ class PadsParser:
                 hdr = text.split()
                 type_name = hdr[0]
                 part_class = hdr[1] if len(hdr) > 1 else "UND"
-                ptd = PartTypeDef(name=type_name, part_class=part_class, line=i + 1)
+                ptd = PartTypeDef(name=type_name, part_class=part_class)
                 i += 1
 
                 while i < end:
@@ -277,7 +277,7 @@ class PadsParser:
                     else:
                         break
                 result.segments.append(
-                    Segment(signal=signal_name, node_a=node_a, node_b=node_b, coords=coords, line=seg_line)
+                    Segment(signal=signal_name, node_a=node_a, node_b=node_b, coords=coords)
                 )
                 continue
 
@@ -286,12 +286,11 @@ class PadsParser:
 
     def _parse_part_section(
         self,
+        sheet_no: int,
         lines: list[str],
         start: int,
         end: int,
         result: ParseResult,
-        active_sheet_no: int | None,
-        active_sheet_name: str | None,
     ) -> ParseResult:
         i = start + 1
         while i < end:
@@ -312,13 +311,11 @@ class PadsParser:
                 part = Part(
                     refdes=refdes,
                     part_type=part_type,
-                    line=part_line,
                     raw_x=raw_x,
                     raw_y=raw_y,
                     raw_rotation=raw_rotation,
                     raw_mirror=raw_mirror,
-                    sheet_no=active_sheet_no,
-                    sheet_name=active_sheet_name,
+                    sheet_no=sheet_no
                 )
                 i += 1
                 while i < end:
@@ -354,8 +351,7 @@ class PadsParser:
         start: int,
         end: int,
         result: ParseResult,
-        sheet_no: int | None,
-        sheet_name: str | None,
+        sheet_no: int
     ) -> ParseResult:
         if sec_name.startswith("*PADS-"):
             return result
@@ -364,13 +360,13 @@ class PadsParser:
         if sec_name == "*PARTTYPE*":
             return self._parse_parttype_section(lines, start, end, result)
         if sec_name == "*PART*":
-            return self._parse_part_section(lines, start, end, result, sheet_no, sheet_name)
+            return self._parse_part_section(sheet_no, lines, start, end, result )
         if sec_name == "*TEXT*":
-            return self._parse_text_section(lines, start, end, result)
+            return self._parse_text_section(sheet_no, lines, start, end, result )
         if sec_name == "*LINES*":
-            return self._parse_lines_section(lines, start, end, result)
+            return self._parse_lines_section(sheet_no, lines, start, end, result)
         if sec_name == "*TIEDOTS*":
-            return self._parse_tiedots_section(lines, start, end, result)
+            return self._parse_tiedots_section(sheet_no, lines, start, end, result)
         if sec_name in (
             "*SCH*",
             "*REMARK*",
@@ -388,8 +384,8 @@ class PadsParser:
             return result
 
         loc = f"line {start + 1}"
-        if sheet_no is not None or sheet_name is not None:
-            loc = f"sheet {sheet_name or '?'} ({sheet_no if sheet_no is not None else '?'}) line {start + 1}"
+        if sheet_no is not None:
+            loc = f"sheet {sheet_no} line {start + 1}"
         warnings.warn(
             f"Unhandled section header {sec_name} at {loc}",
             RuntimeWarning,
@@ -397,7 +393,7 @@ class PadsParser:
         )
         return result
 
-    def _parse_text_section(self, lines: list[str], start: int, end: int, result: ParseResult) -> ParseResult:
+    def _parse_text_section(self, sheet_no: int, lines: list[str], start: int, end: int, result: ParseResult) -> ParseResult:
         i = start + 1
         while i < end:
             text = lines[i].strip()
@@ -432,10 +428,11 @@ class PadsParser:
 
                 result.text_annotations.append(
                     TextAnnotation(
+                        sheet_no=sheet_no,
                         text=text_line,
                         raw_x=raw_x,
                         raw_y=raw_y,
-                        line=i + 1,
+                        # line=i + 1,
                         raw_size=raw_size,
                         raw_style=raw_style,
                     )
@@ -444,7 +441,7 @@ class PadsParser:
             i += 1
         return result
 
-    def _parse_lines_section(self, lines: list[str], start: int, end: int, result: ParseResult) -> ParseResult:
+    def _parse_lines_section(self, sheet_no: int, lines: list[str], start: int, end: int, result: ParseResult) -> ParseResult:
         i = start + 1
         while i < end:
             text = lines[i].strip()
@@ -479,13 +476,13 @@ class PadsParser:
                     break
 
                 if len(pts) >= 2:
-                    result.graphic_polylines.append(GraphicPolyline(points=pts, line=entry_line))
+                    result.graphic_polylines.append(GraphicPolyline(sheet_no=sheet_no, points=pts))
                 continue
 
             i += 1
         return result
 
-    def _parse_tiedots_section(self, lines: list[str], start: int, end: int, result: ParseResult) -> ParseResult:
+    def _parse_tiedots_section(self, sheet_no: int, lines: list[str], start: int, end: int, result: ParseResult) -> ParseResult:
         i = start + 1
         while i < end:
             text = lines[i].strip()
@@ -495,7 +492,7 @@ class PadsParser:
 
             toks = text.split()
             if toks[0].startswith("@@@D") and self.is_int(toks[1]) and self.is_int(toks[2]):
-                result.tiedots.append(TieDot(raw_x=int(toks[1]), raw_y=int(toks[2]), line=i + 1))
+                result.tiedots.append(TieDot(sheet_no=sheet_no, raw_x=int(toks[1]), raw_y=int(toks[2])))
             i += 1
         return result
 
@@ -533,18 +530,14 @@ class PadsParser:
                     RuntimeWarning,
                     stacklevel=2,
                 )
-            if sheet_title:
-                sheet_name = sheet_title
-            else:
-                sheet_name = f"sheet_{idx + 1}"
 
             sheet_result = ParseResult()
             sheet_sections = self._split_sections(sheet_lines)
             for sec_name, sec_start, sec_end in sheet_sections:
                 if sec_start == 0:
                     continue
-                self._dispatch_section(sec_name, sheet_lines, sec_start, sec_end, sheet_result, sheet_no, sheet_name)
-            out.Sheets[sheet_name] = sheet_result
+                self._dispatch_section(sec_name, sheet_lines, sec_start, sec_end, sheet_result, sheet_no)
+            out.Sheets[sheet_title] = sheet_result
             out.parts.update(sheet_result.parts)
             out.part_types.update(sheet_result.part_types)
             out.segments.extend(sheet_result.segments)
@@ -612,7 +605,6 @@ def build_connectivity(result: ParseResult) -> dict[str, Any]:
             component_signals[ref].add(seg.signal)
             if pin is not None:
                 ref_pin_to_signals[ref][pin].add(seg.signal)
-                component_lines[ref].append(seg.line)
 
     return {
         "signal_to_refs": {k: sorted(v) for k, v in signal_to_refs.items()},

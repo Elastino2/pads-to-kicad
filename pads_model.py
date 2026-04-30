@@ -15,7 +15,6 @@ class PinDef:
 class PartTypeDef:
     name: str
     part_class: str
-    line: int
     pins: dict[str, PinDef] = field(default_factory=lambda: {})
 
 
@@ -23,13 +22,11 @@ class PartTypeDef:
 class Part:
     refdes: str
     part_type: str
-    line: int
+    sheet_no: int
     raw_x: int | None = None
     raw_y: int | None = None
     raw_rotation: int | None = None
     raw_mirror: int | None = None
-    sheet_no: int | None = None
-    sheet_name: str | None = None
     # REF-DES annotation offset/rotation from PADS PART block
     ref_ann_dx: int | None = None
     ref_ann_dy: int | None = None
@@ -43,7 +40,7 @@ class Segment:
     node_a: str
     node_b: str
     coords: list[tuple[int, int]]
-    line: int
+    sheet_no: int | None = None
 
 
 @dataclass
@@ -51,22 +48,22 @@ class TextAnnotation:
     text: str
     raw_x: int
     raw_y: int
-    line: int
-    raw_size: int | None = None
-    raw_style: int | None = None
+    sheet_no: int
+    raw_size: int
+    raw_style: int
 
 
 @dataclass
 class GraphicPolyline:
     points: list[tuple[int, int]]
-    line: int
+    sheet_no: int
 
 
 @dataclass
 class TieDot:
     raw_x: int
     raw_y: int
-    line: int
+    sheet_no: int | None = None
 
 
 @dataclass
