@@ -40,30 +40,32 @@ class Segment:
     node_a: str
     node_b: str
     coords: list[tuple[int, int]]
-    sheet_no: int | None = None
 
 
 @dataclass
 class TextAnnotation:
-    text: str
+    sheet_no: int
     raw_x: int
     raw_y: int
-    sheet_no: int
+    raw_rotation: int
+    raw_mirror: int 
     raw_size: int
     raw_style: int
+    raw_fontname: str
+    text: str
 
 
 @dataclass
 class GraphicPolyline:
-    points: list[tuple[int, int]]
     sheet_no: int
+    points: list[tuple[int, int]]
 
 
 @dataclass
 class TieDot:
+    sheet_no: int
     raw_x: int
     raw_y: int
-    sheet_no: int | None = None
 
 
 @dataclass

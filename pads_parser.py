@@ -407,36 +407,40 @@ class PadsParser:
                 i += 1
                 continue
             toks = list(match.groups())
-            if len(toks) >= 2 and self.is_int(toks[0]) and self.is_int(toks[1]):
-                raw_x = int(toks[0])
-                raw_y = int(toks[1])
-                if(int(toks[6])!=0):
-                    warnings.warn(
-                        f"Not implemented: text annotation with nonzero rotation/mirror at line {i + 1}",
-                        RuntimeWarning,
-                        stacklevel=2,
-                    )
-                raw_style = int(toks[4]) if len(toks) > 4 and self.is_int(toks[4]) else None
-                raw_size = int(toks[5]) if len(toks) > 5 and self.is_int(toks[5]) else None
-
-                text_line = ""
-                if i + 1 < end:
-                    nxt = lines[i + 1].rstrip("\r\n")
-                    if nxt.strip() and not self._is_section_token(nxt.strip()):
-                        text_line = nxt.strip()
-                        i += 1
-
-                result.text_annotations.append(
-                    TextAnnotation(
-                        sheet_no=sheet_no,
-                        text=text_line,
-                        raw_x=raw_x,
-                        raw_y=raw_y,
-                        # line=i + 1,
-                        raw_size=raw_size,
-                        raw_style=raw_style,
-                    )
+            raw_x = int(toks[0])
+            raw_y = int(toks[1])
+            if(int(toks[6])!=0):
+                warnings.warn(
+                    f"Not implemented: text annotation with nonzero rotation/mirror at line {i + 1}",
+                    RuntimeWarning,
+                    stacklevel=2,
                 )
+            raw_rotation = int(toks[2])
+            raw_mirror = int(toks[3])
+            raw_style = int(toks[4])
+            raw_size = int(toks[5])
+            raw_fontname = toks[7]
+
+            text_line = ""
+            if i + 1 < end:
+                nxt = lines[i + 1].rstrip("\r\n")
+                if nxt.strip() and not self._is_section_token(nxt.strip()):
+                    text_line = nxt.strip()
+                    i += 1
+
+            result.text_annotations.append(
+                TextAnnotation(
+                    sheet_no=sheet_no,
+                    raw_x=raw_x,
+                    raw_y=raw_y,
+                    raw_rotation=raw_rotation,
+                    raw_mirror=raw_mirror,
+                    raw_style=raw_style,
+                    raw_size=raw_size,
+                    raw_fontname=raw_fontname,
+                    text=text_line
+                )
+            )
 
             i += 1
         return result
@@ -453,7 +457,6 @@ class PadsParser:
             if len(toks) >= 4 and toks[0].startswith("$$DRW") and self.is_int(toks[2]) and self.is_int(toks[3]):
                 base_x = int(toks[2])
                 base_y = int(toks[3])
-                entry_line = i + 1
                 i += 1
 
                 if i >= end:
