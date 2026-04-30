@@ -178,26 +178,6 @@ class PadsParser:
     # PADS part-class tokens per format specification
     _PARTTYPE_CLASSES = frozenset({"RES", "CAP", "IND", "TTL", "UND", "U", "PWR", "GND"})
 
-    def _is_parttype_header_line(self, text: str) -> bool:
-        """Deterministic PARTTYPE entry header detector.
-
-        Rules:
-        - 3+ tokens
-        - First token starts with alpha, '_', or '$' (not '@@')
-        - Second token is a recognised PADS part-class keyword
-        """
-        if self._is_section_token(text):
-            return False
-        toks = text.split()
-        if len(toks) < 3:
-            return False
-        refdes = toks[0]
-        if not refdes or not (refdes[0].isalpha() or refdes[0] in ("_", "$")):
-            return False
-        if refdes.startswith("@@@"):
-            return False
-        return toks[1] in self._PARTTYPE_CLASSES
-
     def _is_part_header_line(self, text: str) -> bool:
         if self._is_section_token(text):
             return False
@@ -223,7 +203,15 @@ class PadsParser:
             if not text or text.startswith("*"):
                 i += 1
                 continue
-            if self._is_parttype_header_line(text):
+            toks = text.split()
+            is_parttype_header = (
+                len(toks) >= 3
+                and not self._is_section_token(text)
+                and not toks[0].startswith("@@@")
+                and (toks[0][0].isalpha() or toks[0][0] in ("_", "$"))
+                and toks[1] in self._PARTTYPE_CLASSES
+            )
+            if is_parttype_header:
                 hdr = text.split()
                 type_name = hdr[0]
                 part_class = hdr[1] if len(hdr) > 1 else "UND"
@@ -235,7 +223,15 @@ class PadsParser:
                     if st.startswith("TIMESTAMP"):
                         i += 1
                         break
-                    if self._is_parttype_header_line(st):
+                    st_toks = st.split()
+                    next_is_parttype_header = (
+                        len(st_toks) >= 3
+                        and not self._is_section_token(st)
+                        and not st_toks[0].startswith("@@@")
+                        and (st_toks[0][0].isalpha() or st_toks[0][0] in ("_", "$"))
+                        and st_toks[1] in self._PARTTYPE_CLASSES
+                    )
+                    if next_is_parttype_header:
                         break
                     i += 1
 
@@ -244,7 +240,15 @@ class PadsParser:
                     if not st:
                         i += 1
                         continue
-                    if self._is_parttype_header_line(st):
+                    st_toks = st.split()
+                    next_is_parttype_header = (
+                        len(st_toks) >= 3
+                        and not self._is_section_token(st)
+                        and not st_toks[0].startswith("@@@")
+                        and (st_toks[0][0].isalpha() or st_toks[0][0] in ("_", "$"))
+                        and st_toks[1] in self._PARTTYPE_CLASSES
+                    )
+                    if next_is_parttype_header:
                         break
                     first = st.split()[0] if st.split() else ""
                     if first in {"GATE", "PWR", "GND", "OFF"}:
