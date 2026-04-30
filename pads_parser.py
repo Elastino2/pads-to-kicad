@@ -150,7 +150,11 @@ class PadsParser:
         return sections
 
     def is_int(self, token: str) -> bool:
-        return bool(re.fullmatch(r"[-+]?\d+", token))
+        try:
+            int(token)
+            return True
+        except ValueError:
+            return False
 
     def is_node(self, token: str) -> bool:
         if token.startswith("@@@"):
