@@ -175,21 +175,6 @@ class PadsParser:
             return False
         return any(self.is_int(tok) for tok in tokens[2:6])
 
-    def parse_resistance_ohm(self, spec: str) -> float | None:
-        m = re.search(r"([\d.]+)\s*([KkMmRr]?)\s*(?:OHM|ohm)?", spec)
-        if not m:
-            return None
-        try:
-            val = float(m.group(1))
-        except ValueError:
-            return None
-        unit = m.group(2).upper()
-        if unit == "K":
-            val *= 1_000
-        elif unit == "M":
-            val *= 1_000_000
-        return val
-
     # PADS part-class tokens per format specification
     _PARTTYPE_CLASSES = frozenset({"RES", "CAP", "IND", "TTL", "UND", "U", "PWR", "GND"})
 
