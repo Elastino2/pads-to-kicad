@@ -545,7 +545,7 @@ class PadsParser:
         """Parse PADS source file and return sheet-centric ParseResult."""
         return self._parse_sheets(file_path)
 
-
+# TODO : remove it after refactoring pads_pipeline to not depend on this heuristic
 def parse_node(node: str) -> tuple[str | None, str | None]:
     """Parse a node reference into component reference and pin number.
     

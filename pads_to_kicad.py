@@ -214,16 +214,6 @@ def _build_symbol_pin_layout_from_sides(
     return layout
 
 
-def _enforce_desc_spacing(values: list[float], min_step: float = 1.27) -> list[float]:
-    """Keep values descending with at least min_step spacing."""
-    if not values:
-        return []
-    out = [values[0]]
-    for v in values[1:]:
-        out.append(min(v, out[-1] - min_step))
-    return out
-
-
 def _symbol_bbox(
     pin_defs: list[dict[str, str]],
     pin_layout: dict[str, tuple[float, float, int]] | None = None,
@@ -1938,11 +1928,10 @@ def write_kicad_schematic(
             tx, ty = coord_map(ta.raw_x, ta.raw_y)
             # PADS text size field is coarse; map minimum readable KiCad text height.
             size_mm = 1.27
-            if ta.raw_size is not None:
-                if ta.raw_size >= 12:
-                    size_mm = 1.52
-                elif ta.raw_size <= 8:
-                    size_mm = 1.00
+            if ta.raw_size >= 12:
+                size_mm = 1.52
+            elif ta.raw_size <= 8:
+                size_mm = 1.00
             _append_text_annotation(lines, ta.text, tx, ty, size_mm=size_mm)
 
         # Emit drawing polylines from source *LINES* section.
