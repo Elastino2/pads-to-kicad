@@ -325,7 +325,15 @@ class PadsParser:
                 break
         return coords, i
 
-    def _parse_signal_section(self, sheet_no: int, lines: list[str], start: int, end: int, result: ParseResult) -> ParseResult:
+    def _parse_signal_section(
+        self,
+        sheet_no: int,
+        lines: list[str],
+        start: int,
+        end: int,
+        result: ParseResult,
+        verbose: bool,
+    ) -> ParseResult:
         # *SIGNAL* SIGNAL_NAME unknown1 unknown2
         # node_a node_b coord_count unknown3
         # x1 y1
@@ -358,14 +366,13 @@ class PadsParser:
 
             signal_name, unknown, unknown2 = self._parse_signal_header(header)
             result.signal_lines[signal_name].append(i + 1)
-
-            if unknown != 0 or unknown2 != 0:
+            if verbose and (unknown != 0 or unknown2 != 0):
                 warnings.warn(
                     (
                         f"Not implemented: *SIGNAL* header nonzero unknown fields for {signal_name!r} "
                         f"at line {i + 1} (unknown={unknown}, unknown2={unknown2})"
                     ),
-                    RuntimeWarning
+                    RuntimeWarning,
                 )
 
             i += 1
@@ -478,12 +485,13 @@ class PadsParser:
         start: int,
         end: int,
         result: ParseResult,
-        sheet_no: int
+        sheet_no: int,
+        verbose: bool,
     ) -> ParseResult:
         if sec_name.startswith("*PADS-"):
             return result
         if sec_name == "*SIGNAL*":
-            return self._parse_signal_section(sheet_no, lines, start, end, result)
+            return self._parse_signal_section(sheet_no, lines, start, end, result, verbose)
         if sec_name == "*PARTTYPE*":
             return self._parse_parttype_section(lines, start, end, result)
         if sec_name == "*PART*":
@@ -617,7 +625,7 @@ class PadsParser:
             i += 1
         return result
 
-    def _parse_sheets(self, file_path: Path) -> ParseResult:
+    def _parse_sheets(self, file_path: Path, verbose: bool = False) -> ParseResult:
         """Parse PADS source file and return a sheet-centric ParseResult."""
         lines = self._read_lines(file_path)
         self._handle_file_signature(lines)
@@ -657,7 +665,7 @@ class PadsParser:
                     continue
                 abs_start = start + sec_start
                 abs_end = start + sec_end
-                self._dispatch_section(sec_name, lines, abs_start, abs_end, sheet_result, sheet_no)
+                self._dispatch_section(sec_name, lines, abs_start, abs_end, sheet_result, sheet_no, verbose)
             out.Sheets[sheet_title] = sheet_result
             out.parts.update(sheet_result.parts)
             out.part_types.update(sheet_result.part_types)
@@ -670,9 +678,9 @@ class PadsParser:
 
         return out
 
-    def parse(self, file_path: Path) -> ParseResult:
+    def parse(self, file_path: Path, verbose: bool = False) -> ParseResult:
         """Parse PADS source file and return sheet-centric ParseResult."""
-        return self._parse_sheets(file_path)
+        return self._parse_sheets(file_path, verbose=verbose)
 
 # TODO : remove it after refactoring pads_pipeline to not depend on this heuristic
 def parse_node(node: str) -> tuple[str | None, str | None]:
