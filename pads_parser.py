@@ -398,15 +398,32 @@ class PadsParser:
         end: int,
         result: ParseResult,
     ) -> ParseResult:
-        # *PART* entries are separated by blank lines in the source file, but we parse them in a single pass by detecting the next part header or section header.
-        i = start + 1
-        while i < end:
-            text = lines[i].strip()
-            if not text:
-                i += 1
+        # *PART* records are blank-line delimited in this source format.
+        blocks: list[list[tuple[int, str]]] = []
+        cur: list[tuple[int, str]] = []
+        for i in range(start + 1, end):
+            st = lines[i].strip()
+            if not st:
+                if cur:
+                    blocks.append(cur)
+                    cur = []
+                continue
+            if self._is_section_token(st):
+                break
+            cur.append((i, st))
+        if cur:
+            blocks.append(cur)
+
+        for block in blocks:
+            hdr_idx, hdr_text = block[0]
+            if not self._is_part_header_line(hdr_text):
+                warnings.warn(
+                    f"Unrecognized PART header at line {hdr_idx + 1}: {hdr_text!r}",
+                    RuntimeWarning,
+                )
                 continue
 
-            hdr = text.split()
+            hdr = hdr_text.split()
             refdes, part_type = hdr[0], hdr[1]
             raw_x = int(hdr[2]) if len(hdr) > 2 and self.is_int(hdr[2]) else None
             raw_y = int(hdr[3]) if len(hdr) > 3 and self.is_int(hdr[3]) else None
@@ -420,34 +437,30 @@ class PadsParser:
                 raw_y=raw_y,
                 raw_rotation=raw_rotation,
                 raw_mirror=raw_mirror,
-                sheet_no=sheet_no
+                sheet_no=sheet_no,
             )
-            i += 1
-            while i < end:
-                st = lines[i].strip()
-               
-                if st and self._is_part_header_line(st):
-                    break
+
+            for bi in range(1, len(block)):
+                _, st = block[bi]
+
                 # Detect REF-DES annotation offset line (numeric tokens, next line == "REF-DES")
                 if (
                     re.match(r"^-?\d+\s+-?\d+", st)
-                    and i + 1 < end
-                    and lines[i + 1].strip().upper() == "REF-DES"
+                    and bi + 1 < len(block)
+                    and block[bi + 1][1].upper() == "REF-DES"
                 ):
                     toks = st.split()
                     if len(toks) >= 3 and self.is_int(toks[0]) and self.is_int(toks[1]) and self.is_int(toks[2]):
                         part.ref_ann_dx = int(toks[0])
                         part.ref_ann_dy = int(toks[1])
                         part.ref_ann_rotation = int(toks[2])
+
                 prop = self._parse_quoted_property_line(st)
                 if prop:
                     key, value = prop
                     part.properties[key] = value
-                i += 1
-            result.parts[refdes] = part
-            continue
 
-            i += 1
+            result.parts[refdes] = part
         return result
 
     def _dispatch_section(
