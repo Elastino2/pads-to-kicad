@@ -71,14 +71,12 @@ class PadsParser:
         if len(parts) > 1 and parts[1] != "LOGIC":
             warnings.warn(
                 f"Unexpected PADS signature tuple[1]={parts[1]!r}, expected 'LOGIC'",
-                RuntimeWarning,
-                stacklevel=2,
+                RuntimeWarning
             )
         if len(parts) > 2 and parts[2] != "V2007.0":
             warnings.warn(
                 f"Unexpected PADS signature tuple[2]={parts[2]!r}, expected 'V2007.0'",
-                RuntimeWarning,
-                stacklevel=2,
+                RuntimeWarning
             )
         if len(parts) > 3:
             self.source_charset_hint = parts[3]
@@ -286,8 +284,7 @@ class PadsParser:
                 else:
                     warnings.warn(
                         f"Unrecognized line in PARTTYPE body for type {type_name!r}: {block[bi]!r}",
-                        RuntimeWarning,
-                        stacklevel=2,
+                        RuntimeWarning
                     )
 
                 bi += 1
@@ -313,8 +310,7 @@ class PadsParser:
         if toks[3] != "0":
             warnings.warn(
                 f"Not implemented: SIGNAL segment header with nonzero unknown3 field: {text!r}",
-                RuntimeWarning,
-                stacklevel=2,
+                RuntimeWarning
             )
         return toks[0], toks[1], int(toks[2])
 
@@ -365,8 +361,7 @@ class PadsParser:
             if not header.startswith("*SIGNAL*"):
                 warnings.warn(
                     f"Expected SIGNAL header at line {i + 1}, got: {header!r}",
-                    RuntimeWarning,
-                    stacklevel=2,
+                    RuntimeWarning
                 )
                 i += 1
                 continue
@@ -403,8 +398,7 @@ class PadsParser:
 
                 warnings.warn(
                     f"Unrecognized line in SIGNAL section for signal {signal_name!r}: {st!r}",
-                    RuntimeWarning,
-                    stacklevel=2,
+                    RuntimeWarning
                 )
                 i += 1
 
@@ -515,8 +509,7 @@ class PadsParser:
         loc = f"line {start + 1}"
         warnings.warn(
             f"Unhandled section header {sec_name} at {loc}",
-            RuntimeWarning,
-            stacklevel=2,
+            RuntimeWarning
         )
         return result
 
@@ -539,8 +532,7 @@ class PadsParser:
             if(int(toks[6])!=0):
                 warnings.warn(
                     f"Not implemented: text annotation with nonzero rotation/mirror at line {i + 1}",
-                    RuntimeWarning,
-                    stacklevel=2,
+                    RuntimeWarning
                 )
             raw_rotation = int(toks[2])
             raw_mirror = int(toks[3])
@@ -646,14 +638,12 @@ class PadsParser:
             if _sht_toks[3] != "-1":
                 warnings.warn(
                     f"Not implemented: *SHT* tuple[3]={_sht_toks[3]!r} at line {start + 1} (expected '-1')",
-                    RuntimeWarning,
-                    stacklevel=2,
+                    RuntimeWarning
                 )
             if _sht_toks[4] != "$$$NONE":
                 warnings.warn(
                     f"Not implemented: *SHT* tuple[4]={_sht_toks[4]!r} at line {start + 1} (expected '$$$NONE')",
-                    RuntimeWarning,
-                    stacklevel=2,
+                    RuntimeWarning
                 )
 
             sheet_result = ParseResult()
