@@ -372,6 +372,14 @@ class PadsParser:
 
             while i < end:
                 st = lines[i].strip()
+                if not st:
+                    i += 1
+                    continue
+                if self._is_section_token(st):
+                    break
+                if st.startswith('"'):
+                    i += 1
+                    continue
 
                 seg_hdr = self._try_parse_signal_segment_header(st)
                 if seg_hdr is not None:
