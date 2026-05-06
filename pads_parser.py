@@ -131,17 +131,6 @@ class PadsParser:
             return True
         return bool(re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", token))
 
-    def looks_like_part_header(self, text: str) -> bool:
-        tokens = text.split()
-        if len(tokens) < 6:
-            return False
-        if not (tokens[0][0].isalpha() or tokens[0][0] == "_"):
-            return False
-        if tokens[0].startswith("@@@") or "." in tokens[0]:
-            return False
-        if tokens[1].startswith('"') or tokens[1][0].isdigit():
-            return False
-        return any(self.is_int(tok) for tok in tokens[2:6])
 
     # PADS part-class tokens per format specification
     _PARTTYPE_CLASSES = frozenset({"RES", "CAP", "IND", "TTL", "UND", "U", "PWR", "GND"})
