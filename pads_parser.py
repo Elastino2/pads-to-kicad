@@ -367,9 +367,6 @@ class PadsParser:
 
             while i < end:
                 st = lines[i].strip()
-                if not st:
-                    # Signal records are separated by blank lines.
-                    break
 
                 seg_hdr = self._try_parse_signal_segment_header(st)
                 if seg_hdr is not None:
@@ -385,9 +382,6 @@ class PadsParser:
                     f"Unrecognized line in SIGNAL section for signal {signal_name!r}: {st!r}",
                     RuntimeWarning
                 )
-                i += 1
-
-            while i < end and not lines[i].strip():
                 i += 1
         return result
 
