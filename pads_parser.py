@@ -131,10 +131,6 @@ class PadsParser:
             return True
         return bool(re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", token))
 
-
-    # PADS part-class tokens per format specification
-    _PARTTYPE_CLASSES = frozenset({"RES", "CAP", "IND", "TTL", "UND", "U", "PWR", "GND"})
-
     def _is_part_header_line(self, text: str) -> bool:
         if self._is_section_token(text):
             return False
