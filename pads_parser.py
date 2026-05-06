@@ -295,40 +295,121 @@ class PadsParser:
             result.part_types[type_name] = ptd
         return result
 
-    def _parse_signal_section(self, sheet_no: int, lines: list[str], start: int, end: int, result: ParseResult) -> ParseResult:
-        header = lines[start].strip()
+    def _parse_signal_header(self, header: str) -> tuple[str, int, int]:
+        """Parse `*SIGNAL* <name> <unknown> <unknown2>` header tuple."""
         stoks = header.split()
         signal_name = stoks[1] if len(stoks) > 1 else "UNKNOWN"
-        result.signal_lines[signal_name].append(start + 1)
+        unknown = int(stoks[2]) if len(stoks) > 2 and self.is_int(stoks[2]) else 0
+        unknown2 = int(stoks[3]) if len(stoks) > 3 and self.is_int(stoks[3]) else 0
+        return signal_name, unknown, unknown2
 
-        i = start + 1
+    def _try_parse_signal_segment_header(self, text: str) -> tuple[str, str, int] | None:
+        """Parse `node_a node_b coord_count unknown3` row from SIGNAL body."""
+        toks = text.split()
+        if len(toks) < 4:
+            return None
+        if not (self.is_node(toks[0]) and self.is_node(toks[1]) and self.is_int(toks[2])):
+            return None
+        if toks[3] != "0":
+            warnings.warn(
+                f"Not implemented: SIGNAL segment header with nonzero unknown3 field: {text!r}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        return toks[0], toks[1], int(toks[2])
+
+    def _parse_signal_coords(
+        self,
+        lines: list[str],
+        start: int,
+        end: int,
+        coord_count: int,
+    ) -> tuple[list[tuple[int, int]], int]:
+        """Read `coord_count` coordinate lines starting at `start`."""
+        i = start
+        coords: list[tuple[int, int]] = []
+        for _ in range(coord_count):
+            if i >= end:
+                break
+            ct = lines[i].strip().split()
+            if len(ct) >= 2 and self.is_int(ct[0]) and self.is_int(ct[1]):
+                coords.append((int(ct[0]), int(ct[1])))
+                i += 1
+            else:
+                break
+        return coords, i
+
+    def _parse_signal_section(self, sheet_no: int, lines: list[str], start: int, end: int, result: ParseResult) -> ParseResult:
+        # *SIGNAL* SIGNAL_NAME unknown1 unknown2
+        # node_a node_b coord_count unknown3
+        # x1 y1
+        # ...
+        #
+        # Example:
+        # *SIGNAL* N39362253 0 0
+        #  R5.2         U2.6         4 0
+        #  12400  13900 
+        #  12400  13600 
+        #  12700  13600 
+        #  12700  14300 
+        i = start
         while i < end:
-            st = lines[i].strip()
-            if not st:
+            while i < end and not lines[i].strip():
+                i += 1
+            if i >= end:
+                break
+
+            header = lines[i].strip()
+            if self._is_section_token(header) and not header.startswith("*SIGNAL*"):
+                break
+            if not header.startswith("*SIGNAL*"):
+                warnings.warn(
+                    f"Expected SIGNAL header at line {i + 1}, got: {header!r}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
                 i += 1
                 continue
 
-            toks = st.split()
-            if len(toks) >= 4 and self.is_node(toks[0]) and self.is_node(toks[1]) and self.is_int(toks[2]):
-                node_a, node_b = toks[0], toks[1]
-                coord_count = int(toks[2])
-                i += 1
-                coords: list[tuple[int, int]] = []
-                for _ in range(coord_count):
-                    if i >= end:
-                        break
-                    ct = lines[i].strip().split()
-                    if len(ct) >= 2 and self.is_int(ct[0]) and self.is_int(ct[1]):
-                        coords.append((int(ct[0]), int(ct[1])))
-                        i += 1
-                    else:
-                        break
-                result.segments.append(
-                    Segment(sheet_no=sheet_no, signal=signal_name, node_a=node_a, node_b=node_b, coords=coords)
+            signal_name, unknown, unknown2 = self._parse_signal_header(header)
+            result.signal_lines[signal_name].append(i + 1)
+
+            if unknown != 0 or unknown2 != 0:
+                warnings.warn(
+                    (
+                        f"Not implemented: *SIGNAL* header nonzero unknown fields for {signal_name!r} "
+                        f"at line {i + 1} (unknown={unknown}, unknown2={unknown2})"
+                    ),
+                    RuntimeWarning
                 )
-                continue
 
             i += 1
+
+            while i < end:
+                st = lines[i].strip()
+                if not st:
+                    # Signal records are separated by blank lines.
+                    break
+
+                seg_hdr = self._try_parse_signal_segment_header(st)
+                if seg_hdr is not None:
+                    node_a, node_b, coord_count = seg_hdr
+                    i += 1
+                    coords, i = self._parse_signal_coords(lines, i, end, coord_count)
+                    result.segments.append(
+                        Segment(sheet_no=sheet_no, signal=signal_name, node_a=node_a, node_b=node_b, coords=coords)
+                    )
+                    continue
+
+                warnings.warn(
+                    f"Unrecognized line in SIGNAL section for signal {signal_name!r}: {st!r}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                i += 1
+
+            while i < end and not lines[i].strip():
+                i += 1
         return result
 
     def _parse_part_section(
@@ -580,7 +661,9 @@ class PadsParser:
             for sec_name, sec_start, sec_end in sheet_sections:
                 if sec_start == 0:
                     continue
-                self._dispatch_section(sec_name, sheet_lines, sec_start, sec_end, sheet_result, sheet_no)
+                abs_start = start + sec_start
+                abs_end = start + sec_end
+                self._dispatch_section(sec_name, lines, abs_start, abs_end, sheet_result, sheet_no)
             out.Sheets[sheet_title] = sheet_result
             out.parts.update(sheet_result.parts)
             out.part_types.update(sheet_result.part_types)
