@@ -146,6 +146,11 @@ class PadsParser:
             return False
         if part_type.startswith('"'):
             return False
+        # Prevent numeric style rows (e.g. "250 80 90 0 ...") from being treated as part headers.
+        if self.is_int(part_type):
+            return False
+        if not re.search(r"[A-Za-z_$]", part_type):
+            return False
 
         return all(self.is_int(toks[i]) for i in range(2, 6))
 
@@ -393,6 +398,7 @@ class PadsParser:
         end: int,
         result: ParseResult,
     ) -> ParseResult:
+        # *PART* entries are separated by blank lines in the source file, but we parse them in a single pass by detecting the next part header or section header.
         i = start + 1
         while i < end:
             text = lines[i].strip()
@@ -400,48 +406,46 @@ class PadsParser:
                 i += 1
                 continue
 
-            if self._is_part_header_line(text):
-                hdr = text.split()
-                refdes, part_type = hdr[0], hdr[1]
-                raw_x = int(hdr[2]) if len(hdr) > 2 and self.is_int(hdr[2]) else None
-                raw_y = int(hdr[3]) if len(hdr) > 3 and self.is_int(hdr[3]) else None
-                raw_rotation = int(hdr[4]) if len(hdr) > 4 and self.is_int(hdr[4]) else None
-                raw_mirror = int(hdr[5]) if len(hdr) > 5 and self.is_int(hdr[5]) else None
+            hdr = text.split()
+            refdes, part_type = hdr[0], hdr[1]
+            raw_x = int(hdr[2]) if len(hdr) > 2 and self.is_int(hdr[2]) else None
+            raw_y = int(hdr[3]) if len(hdr) > 3 and self.is_int(hdr[3]) else None
+            raw_rotation = int(hdr[4]) if len(hdr) > 4 and self.is_int(hdr[4]) else None
+            raw_mirror = int(hdr[5]) if len(hdr) > 5 and self.is_int(hdr[5]) else None
 
-                part = Part(
-                    refdes=refdes,
-                    part_type=part_type,
-                    raw_x=raw_x,
-                    raw_y=raw_y,
-                    raw_rotation=raw_rotation,
-                    raw_mirror=raw_mirror,
-                    sheet_no=sheet_no
-                )
+            part = Part(
+                refdes=refdes,
+                part_type=part_type,
+                raw_x=raw_x,
+                raw_y=raw_y,
+                raw_rotation=raw_rotation,
+                raw_mirror=raw_mirror,
+                sheet_no=sheet_no
+            )
+            i += 1
+            while i < end:
+                st = lines[i].strip()
+               
+                if st and self._is_part_header_line(st):
+                    break
+                # Detect REF-DES annotation offset line (numeric tokens, next line == "REF-DES")
+                if (
+                    re.match(r"^-?\d+\s+-?\d+", st)
+                    and i + 1 < end
+                    and lines[i + 1].strip().upper() == "REF-DES"
+                ):
+                    toks = st.split()
+                    if len(toks) >= 3 and self.is_int(toks[0]) and self.is_int(toks[1]) and self.is_int(toks[2]):
+                        part.ref_ann_dx = int(toks[0])
+                        part.ref_ann_dy = int(toks[1])
+                        part.ref_ann_rotation = int(toks[2])
+                prop = self._parse_quoted_property_line(st)
+                if prop:
+                    key, value = prop
+                    part.properties[key] = value
                 i += 1
-                while i < end:
-                    st = lines[i].strip()
-                    if st and self._is_section_token(st):
-                        break
-                    if st and self._is_part_header_line(st):
-                        break
-                    # Detect REF-DES annotation offset line (numeric tokens, next line == "REF-DES")
-                    if (
-                        re.match(r"^-?\d+\s+-?\d+", st)
-                        and i + 1 < end
-                        and lines[i + 1].strip().upper() == "REF-DES"
-                    ):
-                        toks = st.split()
-                        if len(toks) >= 3 and self.is_int(toks[0]) and self.is_int(toks[1]) and self.is_int(toks[2]):
-                            part.ref_ann_dx = int(toks[0])
-                            part.ref_ann_dy = int(toks[1])
-                            part.ref_ann_rotation = int(toks[2])
-                    prop = self._parse_quoted_property_line(st)
-                    if prop:
-                        key, value = prop
-                        part.properties[key] = value
-                    i += 1
-                result.parts[refdes] = part
-                continue
+            result.parts[refdes] = part
+            continue
 
             i += 1
         return result
