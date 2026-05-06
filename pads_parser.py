@@ -166,83 +166,133 @@ class PadsParser:
 
         return all(self.is_int(toks[i]) for i in range(2, 6))
 
+    def _parse_quoted_property_line(self, text: str) -> tuple[str, str] | None:
+        """Parse a quoted property line from *PART* body.
+
+        Supports both forms:
+        - "KEY" VALUE
+        - "KEY"              (empty value)
+        """
+        m = re.match(r'^"([^"]+)"(?:\s+(.*))?$', text)
+        if not m:
+            return None
+
+        key = m.group(1)
+        raw_value = m.group(2)
+        if raw_value is None:
+            return key, ""
+
+        value = raw_value.strip()
+        if len(value) >= 2 and value.startswith('"') and value.endswith('"'):
+            value = value[1:-1]
+        return key, value
+
+    def _parse_parttype_timestamp(self, text: str) -> int:
+        """Convert `TIMESTAMP yyyy.mm.dd.hh.mm.ss` to integer yyyymmddhhmmss.
+
+        Returns 0 when timestamp token is missing or malformed.
+        """
+        toks = text.split(maxsplit=1)
+        if len(toks) < 2:
+            return 0
+
+        raw = toks[1].strip()
+        digits = re.sub(r"\D", "", raw)
+        if len(digits) != 14 or not digits.isdigit():
+            return 0
+        return int(digits)
+
+    
+    
+    
+    # ID CLASS unknown1 unknown2 unknown3 unknown4
+    # TIMESTAMP yyyy.mm.dd.hh.mm.ss
+    # GATE number_of_typename pin_count unknown2 # warn if unknown2 != 0
+    # or
+    # [GND|PWF|OFF] pin_count unknown2 # warn if unknown2 != 0 
+    # EXAMPLE:
+    # R_7 RES  1   0   0     0
+    # TIMESTAMP 1970.01.01.00.00.00
+    # GATE 1 2 0
+    # RE
+    # 1 0 L 1
+    # 2 0 L 2
     def _parse_parttype_section(self, lines: list[str], start: int, end: int, result: ParseResult) -> ParseResult:
-        i = start + 1
-        while i < end:
-            text = lines[i].strip()
-            if not text or text.startswith("*"):
-                i += 1
+        """Parse *PARTTYPE* entries split by blank-line separators."""
+
+        # PARTTYPE records are separated by blank lines in the source file.
+        blocks: list[list[str]] = []
+        cur: list[str] = []
+        for i in range(start + 1, end):
+            st = lines[i].strip()
+            if not st:
+                if cur:
+                    blocks.append(cur)
+                    cur = []
                 continue
-            toks = text.split()
-            is_parttype_header = (
-                len(toks) >= 3
-                and not self._is_section_token(text)
-                and not toks[0].startswith("@@@")
-                and (toks[0][0].isalpha() or toks[0][0] in ("_", "$"))
-                and toks[1] in self._PARTTYPE_CLASSES
-            )
-            if is_parttype_header:
-                hdr = text.split()
-                type_name = hdr[0]
-                part_class = hdr[1] if len(hdr) > 1 else "UND"
-                ptd = PartTypeDef(name=type_name, part_class=part_class)
-                i += 1
+            if self._is_section_token(st):
+                break
+            cur.append(st)
+        if cur:
+            blocks.append(cur)
 
-                while i < end:
-                    st = lines[i].strip()
-                    if st.startswith("TIMESTAMP"):
-                        i += 1
-                        break
-                    st_toks = st.split()
-                    next_is_parttype_header = (
-                        len(st_toks) >= 3
-                        and not self._is_section_token(st)
-                        and not st_toks[0].startswith("@@@")
-                        and (st_toks[0][0].isalpha() or st_toks[0][0] in ("_", "$"))
-                        and st_toks[1] in self._PARTTYPE_CLASSES
-                    )
-                    if next_is_parttype_header:
-                        break
-                    i += 1
-
-                while i < end:
-                    st = lines[i].strip()
-                    if not st:
-                        i += 1
-                        continue
-                    st_toks = st.split()
-                    next_is_parttype_header = (
-                        len(st_toks) >= 3
-                        and not self._is_section_token(st)
-                        and not st_toks[0].startswith("@@@")
-                        and (st_toks[0][0].isalpha() or st_toks[0][0] in ("_", "$"))
-                        and st_toks[1] in self._PARTTYPE_CLASSES
-                    )
-                    if next_is_parttype_header:
-                        break
-                    first = st.split()[0] if st.split() else ""
-                    if first in {"GATE", "PWR", "GND", "OFF"}:
-                        gate_toks = st.split()
-                        pin_count = int(gate_toks[2]) if len(gate_toks) > 2 and self.is_int(gate_toks[2]) else 0
-                        i += 1
-                        if i < len(lines):
-                            i += 1
-                        for _ in range(pin_count):
-                            if i >= len(lines):
-                                break
-                            pk = lines[i].strip().split()
-                            if len(pk) >= 2:
-                                pnum = pk[0]
-                                pdir = pk[2] if len(pk) > 2 else "U"
-                                pname = " ".join(pk[3:]) if len(pk) > 3 else pnum
-                                ptd.pins[pnum] = PinDef(number=pnum, name=pname, direction=pdir)
-                            i += 1
-                        continue
-                    i += 1
-
-                result.part_types[type_name] = ptd
+        for block in blocks:
+            hdr_toks = block[0].split()
+            if not hdr_toks:
                 continue
-            i += 1
+
+            type_name = hdr_toks[0]
+            part_class = hdr_toks[1] if len(hdr_toks) > 1 else "UND"
+            timestamp = 0
+
+            # Pin payload typically starts after TIMESTAMP; if missing, parse from line 2.
+            payload_start = 1
+            for bi in range(1, len(block)):
+                if block[bi].startswith("TIMESTAMP"):
+                    timestamp = self._parse_parttype_timestamp(block[bi])
+                    payload_start = bi + 1
+                    break
+            ptd = PartTypeDef(name=type_name, part_class=part_class, timestamp=timestamp)
+
+            bi = payload_start
+            while bi < len(block):
+                st_toks = block[bi].split()
+                first = st_toks[0] if st_toks else ""
+
+                if first in {"GATE", "PWR", "GND", "OFF"}:
+                    if first == "GATE":
+                        pin_count = int(st_toks[2]) if len(st_toks) > 2 and self.is_int(st_toks[2]) else 0
+                    else:
+                        pin_count = int(st_toks[1]) if len(st_toks) > 1 and self.is_int(st_toks[1]) else 0
+
+                    bi += 1
+                    # Optional gate label row (ex: RE) before pin rows.
+                    if bi < len(block):
+                        label_toks = block[bi].split()
+                        if not label_toks or not self.is_int(label_toks[0]):
+                            bi += 1
+
+                    for _ in range(pin_count):
+                        if bi >= len(block):
+                            break
+                        pk = block[bi].split()
+                        if len(pk) >= 1 and self.is_int(pk[0]):
+                            pnum = pk[0]
+                            pdir = pk[2] if len(pk) > 2 else "U"
+                            pname = " ".join(pk[3:]) if len(pk) > 3 else pnum
+                            ptd.pins[pnum] = PinDef(number=pnum, name=pname, direction=pdir)
+                        bi += 1
+                    continue
+                else:
+                    warnings.warn(
+                        f"Unrecognized line in PARTTYPE body for type {type_name!r}: {block[bi]!r}",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+
+                bi += 1
+
+            result.part_types[type_name] = ptd
         return result
 
     def _parse_signal_section(self, sheet_no: int, lines: list[str], start: int, end: int, result: ParseResult) -> ParseResult:
@@ -299,7 +349,7 @@ class PadsParser:
             if self._is_part_header_line(text):
                 hdr = text.split()
                 refdes, part_type = hdr[0], hdr[1]
-                raw_x = int(hdr[2]) if len(hdr) > 3 and self.is_int(hdr[2]) else None
+                raw_x = int(hdr[2]) if len(hdr) > 2 and self.is_int(hdr[2]) else None
                 raw_y = int(hdr[3]) if len(hdr) > 3 and self.is_int(hdr[3]) else None
                 raw_rotation = int(hdr[4]) if len(hdr) > 4 and self.is_int(hdr[4]) else None
                 raw_mirror = int(hdr[5]) if len(hdr) > 5 and self.is_int(hdr[5]) else None
@@ -316,23 +366,25 @@ class PadsParser:
                 i += 1
                 while i < end:
                     st = lines[i].strip()
+                    if st and self._is_section_token(st):
+                        break
                     if st and self._is_part_header_line(st):
                         break
                     # Detect REF-DES annotation offset line (numeric tokens, next line == "REF-DES")
                     if (
                         re.match(r"^-?\d+\s+-?\d+", st)
                         and i + 1 < end
-                        and lines[i + 1].strip() == "REF-DES"
+                        and lines[i + 1].strip().upper() == "REF-DES"
                     ):
                         toks = st.split()
                         if len(toks) >= 3 and self.is_int(toks[0]) and self.is_int(toks[1]) and self.is_int(toks[2]):
                             part.ref_ann_dx = int(toks[0])
                             part.ref_ann_dy = int(toks[1])
                             part.ref_ann_rotation = int(toks[2])
-                    prop_m = re.match(r'^"([^"]+)"\s+(.*)$', st)
-                    if prop_m:
-                        key, value = prop_m.groups()
-                        part.properties[key] = value.strip().strip('"')
+                    prop = self._parse_quoted_property_line(st)
+                    if prop:
+                        key, value = prop
+                        part.properties[key] = value
                     i += 1
                 result.parts[refdes] = part
                 continue

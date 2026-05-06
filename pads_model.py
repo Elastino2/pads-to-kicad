@@ -15,6 +15,7 @@ class PinDef:
 class PartTypeDef:
     name: str
     part_class: str
+    timestamp: int
     pins: dict[str, PinDef] = field(default_factory=lambda: {})
 
 
