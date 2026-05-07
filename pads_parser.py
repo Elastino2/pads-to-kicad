@@ -575,7 +575,29 @@ class PadsParser:
             i += 1
         return result
 
+    # NAME LINES    x  y  number_of_tokens  unknown2
+    # CLOSED number_of_points  width  unknown
+    #
+    # EXAMPLE:
+    # $$DRW00000       LINES    16070  8600   1   0
+    # CLOSED 5   1   255
+    # 0      200   
+    # 0      16200 
+    # 28000  16200 
+    # 28000  200   
+    # 0      200  
     def _parse_lines_section(self, sheet_no: int, lines: list[str], start: int, end: int, result: ParseResult) -> ParseResult:
+        def _is_lines_header(toks: list[str]) -> bool:
+            # NAME LINES base_x base_y token_count unknown2
+            return (
+                len(toks) >= 6
+                and toks[1] == "LINES"
+                and self.is_int(toks[2])
+                and self.is_int(toks[3])
+                and self.is_int(toks[4])
+                and self.is_int(toks[5])
+            )
+
         i = start + 1
         while i < end:
             text = lines[i].strip()
@@ -584,27 +606,44 @@ class PadsParser:
                 continue
 
             toks = text.split()
-            if len(toks) >= 4 and toks[0].startswith("$$DRW") and self.is_int(toks[2]) and self.is_int(toks[3]):
+            if _is_lines_header(toks):
                 base_x = int(toks[2])
                 base_y = int(toks[3])
+                token_count = int(toks[4])
                 i += 1
 
-                if i >= end:
-                    continue
-                st = lines[i].strip().split()
-
-                point_count = int(st[1])
-                i += 1
-                pts: list[tuple[int, int]] = []
-                for _ in range(point_count):
-                    if i >= end:
+                consumed = 0
+                while consumed < token_count and i < end:
+                    st = lines[i].strip()
+                    if not st:
+                        i += 1
+                        continue
+                    if self._is_section_token(st):
                         break
-                    pt = lines[i].strip().split()
-                    pts.append((base_x + int(pt[0]), base_y + int(pt[1])))
-                    i += 1
-                    continue
 
-                result.graphic_polylines.append(GraphicPolyline(sheet_no=sheet_no, points=pts))
+                    sub = st.split()
+                    if sub[0] == "CLOSED" and len(sub) >= 2 and self.is_int(sub[1]):
+                        point_count = int(sub[1])
+                        i += 1
+
+                        pts: list[tuple[int, int]] = []
+                        for _ in range(point_count):
+                            if i >= end:
+                                break
+                            pt = lines[i].strip().split()
+                            if len(pt) < 2 or not (self.is_int(pt[0]) and self.is_int(pt[1])):
+                                break
+                            pts.append((base_x + int(pt[0]), base_y + int(pt[1])))
+                            i += 1
+
+                        if pts:
+                            result.graphic_polylines.append(GraphicPolyline(sheet_no=sheet_no, points=pts))
+                        consumed += 1
+                        continue
+
+                    # Unknown subnode: consume one token to avoid infinite loop.
+                    consumed += 1
+                    i += 1
                 continue
 
             i += 1
