@@ -188,9 +188,8 @@ def main() -> None:
 
     print(f"Parts:       {len(result.parts)}")
     print(f"Part types:  {len(result.part_types)}")
-    print(f"Segments:    {sum(len(segs) for segs in result.signal_lines.values())}")
-    print()
-    print("Verdict: PASS (connectivity parse complete)")
+    print(f"Signals:    {sum(len(segs) for segs in result.signal_lines.values())}")
+    print(f"CaeDecals:  {len(result.caedecals)}")
     if args.output:
         print(f"Report: {args.output}")
     if args.kicad_ir:

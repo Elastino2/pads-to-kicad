@@ -5,6 +5,8 @@ import warnings
 from pathlib import Path
 
 from pads_model import (
+    CaeDecalDef,
+    CaeDecalPrimitive,
     GraphicPolyline,
     ParseResult,
     Part,
@@ -282,6 +284,161 @@ class PadsParser:
             result.part_types[type_name] = ptd
         return result
 
+    def _parse_caedecal_section(self, lines: list[str], start: int, end: int, result: ParseResult) -> ParseResult:
+        """Parse *CAEDECAL* entries split by blank-line separators.
+
+        NAME x y width height width2 height2 number_of_text number_of_drawing_nodes unknown number_of_pinmap count_of_nodes [unknown3]
+        TIMESTAMP yyyy.mm.dd.hh.mm.ss
+        fontname1
+        fontname2
+        ...
+
+        EXAMPLE :
+        CONN_B6B-PH-K-S_JST 32000 32000 100 10 100 10 3 1 0 6 10 0
+        TIMESTAMP 2021.05.18.07.40.55
+        "Default Font"
+        "Default Font"
+        0 830 0 0 92 10 "Default Font"
+        REF-DES
+        0 0 0 0 100 10 "Default Font"
+        PART-TYPE
+        0 -170 0 0 93 10 "Default Font"
+        Value
+        CLOSED 5   1   255
+        0     0    
+        0     700  
+        200   700  
+        200   0    
+        0     0    
+        T-300  600   0 1 -250 0 0 0 -350 0 0 9 PIN150
+        P0 0 0 0 0 0 0 1 192
+        T-300  500   0 1 -250 0 0 0 -350 0 0 9 PIN150
+        P0 0 0 0 0 0 0 1 192
+        T-300  400   0 1 -250 0 0 0 -350 0 0 9 PIN150
+        P0 0 0 0 0 0 0 1 192
+        T-300  300   0 1 -250 0 0 0 -350 0 0 9 PIN150
+        P0 0 0 0 0 0 0 1 192
+        T-300  200   0 1 -250 0 0 0 -350 0 0 9 PIN150
+        P0 0 0 0 0 0 0 1 192
+        T-300  100   0 1 -250 0 0 0 -350 0 0 9 PIN150
+        P0 0 0 0 0 0 0 1 192
+
+        Supported primitive subnodes:
+        - OPEN
+        - CLOSED
+        - CIRCLE
+        - COPCLS
+        """
+        blocks: list[list[str]] = []
+        cur: list[str] = []
+        for i in range(start + 1, end):
+            st = lines[i].strip()
+            if not st:
+                if cur:
+                    blocks.append(cur)
+                    cur = []
+                continue
+            if self._is_section_token(st):
+                break
+            cur.append(st)
+        if cur:
+            blocks.append(cur)
+
+        primitive_tokens = {"OPEN", "CLOSED", "CIRCLE", "COPCLS"}
+
+        def _as_int(toks: list[str], idx: int) -> int | None:
+            if idx < len(toks) and self.is_int(toks[idx]):
+                return int(toks[idx])
+            return None
+
+        for block in blocks:
+            hdr_toks = block[0].split()
+            if not hdr_toks:
+                continue
+
+            name = hdr_toks[0]
+            raw_x = _as_int(hdr_toks, 1)
+            raw_y = _as_int(hdr_toks, 2)
+            raw_width = _as_int(hdr_toks, 3)
+            raw_height = _as_int(hdr_toks, 4)
+            raw_width2 = _as_int(hdr_toks, 5)
+            raw_height2 = _as_int(hdr_toks, 6)
+            number_of_text = _as_int(hdr_toks, 7)
+            number_of_drawing_nodes = _as_int(hdr_toks, 8)
+            header_unknown1 = _as_int(hdr_toks, 9)
+            number_of_pinmap = _as_int(hdr_toks, 10)
+            count_of_nodes = _as_int(hdr_toks, 11)
+            header_unknown3 = _as_int(hdr_toks, 12)
+
+            if len(hdr_toks) < 11:
+                warnings.warn(
+                    f"Malformed CAEDECAL header for {name!r}: {block[0]!r}",
+                    RuntimeWarning,
+                )
+
+            timestamp = 0
+            primitives: list[CaeDecalPrimitive] = []
+
+            bi = 1
+            while bi < len(block):
+                text = block[bi]
+                if text.startswith("TIMESTAMP"):
+                    timestamp = self._parse_parttype_timestamp(text)
+                    bi += 1
+                    continue
+
+                toks = text.split()
+                token0 = toks[0] if toks else ""
+                if token0 in primitive_tokens and len(toks) >= 2 and self.is_int(toks[1]):
+                    point_count = int(toks[1])
+                    width = int(toks[2]) if len(toks) >= 3 and self.is_int(toks[2]) else None
+                    style = int(toks[3]) if len(toks) >= 4 and self.is_int(toks[3]) else None
+
+                    bi += 1
+                    points: list[tuple[int, int]] = []
+                    for _ in range(point_count):
+                        if bi >= len(block):
+                            break
+                        pt = block[bi].split()
+                        if len(pt) < 2 or not (self.is_int(pt[0]) and self.is_int(pt[1])):
+                            break
+                        points.append((int(pt[0]), int(pt[1])))
+                        bi += 1
+
+                    primitives.append(
+                        CaeDecalPrimitive(
+                            kind=token0,
+                            point_count=point_count,
+                            width=width,
+                            style=style,
+                            points=points,
+                        )
+                    )
+                    continue
+
+                bi += 1
+
+            result.caedecals[name] = CaeDecalDef(
+                name=name,
+                timestamp=timestamp,
+                raw_x=raw_x,
+                raw_y=raw_y,
+                raw_width=raw_width,
+                raw_height=raw_height,
+                raw_width2=raw_width2,
+                raw_height2=raw_height2,
+                number_of_text=number_of_text,
+                number_of_drawing_nodes=number_of_drawing_nodes,
+                header_unknown1=header_unknown1,
+                number_of_pinmap=number_of_pinmap,
+                count_of_nodes=count_of_nodes,
+                header_unknown3=header_unknown3,
+                header_tokens=hdr_toks,
+                primitives=primitives,
+                raw_lines=list(block),
+            )
+        return result
+
     def _parse_signal_header(self, header: str) -> tuple[str, int, int]:
         """Parse `*SIGNAL* <name> <unknown> <unknown2>` header tuple."""
         stoks = header.split()
@@ -493,6 +650,8 @@ class PadsParser:
             return self._parse_signal_section(sheet_no, lines, start, end, result, verbose)
         if sec_name == "*PARTTYPE*":
             return self._parse_parttype_section(lines, start, end, result)
+        if sec_name == "*CAEDECAL*":
+            return self._parse_caedecal_section(lines, start, end, result)
         if sec_name == "*PART*":
             return self._parse_part_section(sheet_no, lines, start, end, result )
         if sec_name == "*TEXT*":
@@ -509,7 +668,6 @@ class PadsParser:
             "*CONNECTION*",
             "*FIELDS*",
             "*CAE*",
-            "*CAEDECAL*",
             "*BUSSES*",
             "*OFFPAGE REFS*",
             "*NETNAMES*",
@@ -707,6 +865,7 @@ class PadsParser:
             out.Sheets[sheet_title] = sheet_result
             out.parts.update(sheet_result.parts)
             out.part_types.update(sheet_result.part_types)
+            out.caedecals.update(sheet_result.caedecals)
             out.text_annotations.extend(sheet_result.text_annotations)
             out.graphic_polylines.extend(sheet_result.graphic_polylines)
             out.tiedots.extend(sheet_result.tiedots)

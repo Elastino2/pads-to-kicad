@@ -71,10 +71,41 @@ class TieDot:
 
 
 @dataclass
+class CaeDecalPrimitive:
+    kind: str
+    point_count: int
+    width: int | None = None
+    style: int | None = None
+    points: list[tuple[int, int]] = field(default_factory=lambda: [])
+
+
+@dataclass
+class CaeDecalDef:
+    name: str
+    timestamp: int
+    raw_x: int | None = None
+    raw_y: int | None = None
+    raw_width: int | None = None
+    raw_height: int | None = None
+    raw_width2: int | None = None
+    raw_height2: int | None = None
+    number_of_text: int | None = None
+    number_of_drawing_nodes: int | None = None
+    header_unknown1: int | None = None
+    number_of_pinmap: int | None = None
+    count_of_nodes: int | None = None
+    header_unknown3: int | None = None
+    header_tokens: list[str] = field(default_factory=lambda: [])
+    primitives: list[CaeDecalPrimitive] = field(default_factory=lambda: [])
+    raw_lines: list[str] = field(default_factory=lambda: [])
+
+
+@dataclass
 class ParseResult:
     Sheets: dict[str, ParseResult] = field(default_factory=lambda: {})
     parts: dict[str, Part] = field(default_factory=lambda: {})
     part_types: dict[str, PartTypeDef] = field(default_factory=lambda: {})
+    caedecals: dict[str, CaeDecalDef] = field(default_factory=lambda: {})
     text_annotations: list[TextAnnotation] = field(default_factory=lambda: [])
     graphic_polylines: list[GraphicPolyline] = field(default_factory=lambda: [])
     tiedots: list[TieDot] = field(default_factory=lambda: [])
