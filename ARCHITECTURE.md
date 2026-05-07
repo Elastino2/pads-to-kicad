@@ -12,14 +12,12 @@
 - `Segment` — Electrical connection segment (from_node, to_node, signal_name)
 - `TieDot` — Net tie indicator (node reference)
 - `TextAnnotation` — Text labels in schematic (text, location, properties)
-- `ParseResult` — Container for all parsed data from a single sheet:
-  - `sheet_no` — Sheet identifier (0-based)
-  - `sheet_name` — Display name of sheet
-  - `parts` — List of Part objects
-  - `segments` — List of Segment objects (electrical connections)
-  - `tie_dots` — List of TieDot objects
-  - `text_annotations` — List of TextAnnotation objects
-  - `parttype_defs` — Dictionary of PartTypeDef objects
+- `ParseResult` — Container for parsed data (sheet-centric + aggregated):
+  - `Sheets` — Per-sheet parse results keyed by sheet title
+  - `parts` — Dictionary of Part objects keyed by refdes
+  - `part_types` — Dictionary of PartTypeDef objects keyed by type name
+  - `signal_lines` — Dictionary keyed by signal name, values are `list[Segment]`
+  - `tiedots`, `text_annotations`, `graphic_polylines` — Parsed drawing/connectivity side data
 
 **Key Utility Functions:**
 - `is_int(s) → bool` — Validates if string is integer-like
@@ -141,23 +139,13 @@ Phase 3: Subsection Dispatch
   2. Call `_dispatch_section()` for each section
   3. Return accumulated ParseResult
 
-**`parse_sheet_results(file_path: Path) → list[tuple[str, ParseResult]]`** (L517-545) — **MULTI-SHEET ENTRY POINT**
-- **Purpose:** Parse multi-sheet PADS file with per-sheet isolation
+**`parse(file_path: Path) → ParseResult`** — **CURRENT ENTRY POINT**
+- **Purpose:** Parse multi-sheet PADS file and return one aggregated, sheet-centric result.
 - **Flow:**
   1. Detect *SHT* markers via `_sheet_markers()`
-  2. For each SHT entry: parse sheet_no/sheet_name via `_parse_sht_entry()`
-  3. Calculate sheet block boundary
-  4. Call `_parse_sht_block()` to parse subsections within boundary
-  5. Return list of (sheet_name, ParseResult) tuples
-- **Result:** Each sheet has independent ParseResult with correct context
-- **Example output:**
-  ```python
-  [
-      ("01_POWER", ParseResult(sheet_no=0, parts=[...], segments=[...])),
-      ("02_INPUT_HDMI", ParseResult(sheet_no=1, parts=[...], segments=[...])),
-      ...
-  ]
-  ```
+  2. Parse each sheet independently into `out.Sheets[sheet_title]`
+  3. Aggregate `parts`, `part_types`, and `signal_lines` into top-level fields
+- **Result:** both per-sheet (`Sheets`) and top-level aggregate views are available.
 
 #### **Key Design Decisions:**
 
@@ -187,7 +175,7 @@ Phase 3: Subsection Dispatch
 ```
 Input: SCHEMATIC.txt
   ↓
-parse_sheet_results() → list[(sheet_name, ParseResult)]
+parse() → ParseResult (with per-sheet data in `Sheets`)
   ↓
 [Multi-sheet loop]
 ├─ For each (sheet_name, result):
@@ -260,18 +248,18 @@ This double-layer ensures safety even if pipeline passes unsanitized path.
 ```
 PADS .sch File
   ↓
-PadsParser.parse_sheet_results()
+PadsParser.parse()
   ├─ _sheet_markers() → [sheet_idx1, sheet_idx2, ...]
   ├─ _parse_sht_entry() → [(0, "01_POWER"), (1, "02_INPUT"), ...]
   ├─ _split_sections() → [("PART", s1, e1), ("SIGNAL", s2, e2), ...]
   ├─ _parse_sht_block() [for each sheet]
   │  ├─ _dispatch_section() [for each subsection in block]
   │  │  ├─ _parse_part_section() → Part[]
-  │  │  ├─ _parse_signal_section() → Segment[]
+  │  │  ├─ _parse_signal_section() → signal_lines[net] = list[Segment]
   │  │  ├─ _parse_parttype_section() → PartTypeDef{}
   │  │  └─ _parse_text_section() → TextAnnotation[]
-  │  └─ ParseResult(sheet_no=N, sheet_name=X, parts=[], ...)
-  └─ [(sheet_name, ParseResult), ...]
+  │  └─ ParseResult(Sheets={}, parts={}, signal_lines={}, ...)
+  └─ ParseResult with `Sheets` + aggregated top-level fields
   ↓
 Pipeline Orchestration
   ├─ write_legacy_pro_project_file() → .pro
@@ -305,9 +293,9 @@ Output Files
 6. Token 5: acts as boundary marker for multi-line part entries
 
 ### **Sheet Context Propagation**
-- Each ParseResult carries `sheet_no` (0-based) and `sheet_name`
-- Parts, Segments, TextAnnotations tagged with sheet context
-- No cross-sheet data merging
+- Top-level ParseResult stores per-sheet data under `Sheets[sheet_title]`
+- Parts, Segments, TextAnnotations remain tagged with `sheet_no` at entity level
+- Per-sheet isolation is preserved in `Sheets`, with optional top-level aggregated views
 
 
 ---

@@ -75,9 +75,8 @@ class ParseResult:
     Sheets: dict[str, ParseResult] = field(default_factory=lambda: {})
     parts: dict[str, Part] = field(default_factory=lambda: {})
     part_types: dict[str, PartTypeDef] = field(default_factory=lambda: {})
-    segments: list[Segment] = field(default_factory=lambda: [])
     text_annotations: list[TextAnnotation] = field(default_factory=lambda: [])
     graphic_polylines: list[GraphicPolyline] = field(default_factory=lambda: [])
     tiedots: list[TieDot] = field(default_factory=lambda: [])
-    signal_lines: dict[str, list[int]] = field(default_factory=lambda: defaultdict(list))
+    signal_lines: dict[str, list[Segment]] = field(default_factory=lambda: defaultdict(list))
 

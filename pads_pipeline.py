@@ -188,7 +188,7 @@ def main() -> None:
 
     print(f"Parts:       {len(result.parts)}")
     print(f"Part types:  {len(result.part_types)}")
-    print(f"Segments:    {len(result.segments)}")
+    print(f"Segments:    {sum(len(segs) for segs in result.signal_lines.values())}")
     print()
     print("Verdict: PASS (connectivity parse complete)")
     if args.output:

@@ -365,7 +365,6 @@ class PadsParser:
                 continue
 
             signal_name, unknown, unknown2 = self._parse_signal_header(header)
-            result.signal_lines[signal_name].append(i + 1)
             if verbose and (unknown != 0 or unknown2 != 0):
                 warnings.warn(
                     (
@@ -393,7 +392,7 @@ class PadsParser:
                     node_a, node_b, coord_count = seg_hdr
                     i += 1
                     coords, i = self._parse_signal_coords(lines, i, end, coord_count)
-                    result.segments.append(
+                    result.signal_lines[signal_name].append(
                         Segment(sheet_no=sheet_no, signal=signal_name, node_a=node_a, node_b=node_b, coords=coords)
                     )
                     continue
@@ -669,12 +668,11 @@ class PadsParser:
             out.Sheets[sheet_title] = sheet_result
             out.parts.update(sheet_result.parts)
             out.part_types.update(sheet_result.part_types)
-            out.segments.extend(sheet_result.segments)
             out.text_annotations.extend(sheet_result.text_annotations)
             out.graphic_polylines.extend(sheet_result.graphic_polylines)
             out.tiedots.extend(sheet_result.tiedots)
-            for signal_name, line_nums in sheet_result.signal_lines.items():
-                out.signal_lines[signal_name].extend(line_nums)
+            for signal_name, segs in sheet_result.signal_lines.items():
+                out.signal_lines[signal_name].extend(segs)
 
         return out
 

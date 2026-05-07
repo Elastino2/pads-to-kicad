@@ -10,6 +10,11 @@ from pads_model import ParseResult
 from pads_parser import parse_node
 
 
+def _iter_segments(result: ParseResult):
+    for segs in result.signal_lines.values():
+        yield from segs
+
+
 def build_kicad_ir(result: ParseResult) -> dict[str, Any]:
     """Build a KiCad-oriented intermediate representation.
 
@@ -28,7 +33,7 @@ def build_kicad_ir(result: ParseResult) -> dict[str, Any]:
             "pins": {},
         }
 
-    for seg in result.segments:
+    for seg in _iter_segments(result):
         net = nets.setdefault(seg.signal, {"name": seg.signal, "connections": []})
         for node in (seg.node_a, seg.node_b):
             ref, pin = parse_node(node)
@@ -90,34 +95,6 @@ def _pin_sort_key(pin_num: str) -> tuple[int, str]:
     return (1, pin_num)
 
 
-# Per-part-type pin side hints captured from validated source schematics.
-# These are only used for multi-pin custom symbols where PADS does not carry
-# explicit left/right side information in PARTTYPE pin definitions.
-# Side overrides are intentionally empty: automatic side inference from observed
-# wire endpoints is more reliable than hardcoded assignments.
-_PIN_SIDE_OVERRIDES_BY_PARTTYPE: dict[str, dict[str, str]] = {
-    "IC_TPS2041CDBVR_TI": {
-        "1": "R",  # OUT on right
-        "2": "R",  # GND on right
-        "3": "L",  # _FLT on left
-        "4": "L",  # EN/_EN on left
-        "5": "L",  # IN on left
-    }
-}
-
-# Some multi-pin ICs already have left/right pin intent captured in the custom
-# symbol layout. Applying KiCad instance mirror on top of that flips pin sides.
-_DISABLE_INSTANCE_MIRROR_PARTTYPES: set[str] = {
-    "IC_TPS2041CDBVR_TI",
-}
-
-
-def _effective_instance_mirrored(part_type: str, raw_mirror: int | None) -> bool:
-    if part_type in _DISABLE_INSTANCE_MIRROR_PARTTYPES:
-        return False
-    return bool(raw_mirror)
-
-
 def _collect_symbol_pin_defs(result: ParseResult) -> dict[str, list[dict[str, str]]]:
     """Collect pin definitions per part_type used by parts.
 
@@ -125,18 +102,6 @@ def _collect_symbol_pin_defs(result: ParseResult) -> dict[str, list[dict[str, st
       { part_type: [ {"num": "1", "name": "CC1", "dir": "B"}, ... ] }
     """
     pin_defs: dict[str, list[dict[str, str]]] = {}
-
-    # Collect actually used pin numbers per part_type from connectivity.
-    used_pins_by_type: dict[str, set[str]] = {}
-    for seg in result.segments:
-        for node in (seg.node_a, seg.node_b):
-            ref, pin = parse_node(node)
-            if ref is None or pin is None:
-                continue
-            part = result.parts.get(ref)
-            if part is None:
-                continue
-            used_pins_by_type.setdefault(part.part_type, set()).add(pin)
 
     for part in result.parts.values():
         ptype = part.part_type
@@ -152,19 +117,12 @@ def _collect_symbol_pin_defs(result: ParseResult) -> dict[str, list[dict[str, st
                 }
                 for pnum, pdef in result.part_types[ptype].pins.items()
             ]
-            # Prefer pins that are actually used in the current sheet/result.
-            # This trims bogus extra pins from imperfect PARTTYPE definitions.
-            used = used_pins_by_type.get(ptype, set())
-            if used:
-                filtered = [d for d in defs if d["num"] in used]
-                if filtered:
-                    defs = filtered
             pin_defs[ptype] = defs
         else:
             # Fallback: pin numbers inferred from connectivity refs (name=num)
             inferred: set[str] = set()
             refdes = part.refdes
-            for seg in result.segments:
+            for seg in _iter_segments(result):
                 for node in (seg.node_a, seg.node_b):
                     ref, pin = parse_node(node)
                     if ref == refdes and pin is not None:
@@ -766,7 +724,7 @@ def _build_coord_mapper(result: ParseResult):
             xs.append(p.raw_x)
             ys.append(p.raw_y)
 
-    for seg in result.segments:
+    for seg in _iter_segments(result):
         for x, y in seg.coords:
             xs.append(x)
             ys.append(y)
@@ -841,7 +799,8 @@ def write_kicad_schematic(
         net_has_horizontal_real: set[str] = set()
         net_has_non_double_offpage: set[str] = set()
         preferred_seg_idx: dict[str, int] = {}
-        for seg_idx, seg in enumerate(result.segments):
+        all_segments = list(_iter_segments(result))
+        for seg_idx, seg in enumerate(all_segments):
             if not seg.signal or len(seg.coords) < 2:
                 continue
             a_off = (seg.node_a or "").startswith("@@@")
@@ -858,7 +817,7 @@ def write_kicad_schematic(
             if non_double:
                 net_has_non_double_offpage.add(seg.signal)
 
-        for seg_idx, seg in enumerate(result.segments):
+        for seg_idx, seg in enumerate(all_segments):
             if not seg.coords:
                 continue
 
@@ -934,15 +893,13 @@ def write_kicad_schematic(
         base_layout = _build_symbol_pin_layout(pdefs)
         x0_ref, y0_ref = instance_xy[ref]
         rot_ref = _normalize_rotation(part.raw_rotation)
-        mir_ref = _effective_instance_mirrored(part.part_type, part.raw_mirror)
+        mir_ref = bool(part.raw_mirror)
 
         # Adaptive pin fitting is only reliable for 2-pin devices.
         # For ICs/multi-pin parts it can snap pins to distant net endpoints,
         # which shrinks/misplaces the body relative to pins.
         if len(pdefs) != 2:
             decl_idx = {p["num"]: i for i, p in enumerate(pdefs)}
-            part_side_override = _PIN_SIDE_OVERRIDES_BY_PARTTYPE.get(part.part_type, {})
-
             # Infer side from observed endpoint position in component-local space.
             # This keeps IC pins on the same side as the original wiring intent.
             side_hint: dict[str, str] = {}
@@ -982,8 +939,6 @@ def write_kicad_schematic(
             for p in pdefs:
                 pnum = p["num"]
                 hint = side_hint.get(pnum)
-                if pnum in part_side_override:
-                    hint = part_side_override[pnum]
                 if hint is None and dominant_side is not None:
                     # No observation → follow the dominant side
                     hint = dominant_side
@@ -1169,6 +1124,13 @@ def write_kicad_schematic(
         has_adapted_pins_by_ref[ref] = has_adapted_pins
         neutral_instance_transform_by_ref[ref] = has_adapted_pins
 
+    # Keep instance placement on the exact same 0.01 mm grid used by emitted
+    # schematic coordinates. Without this, f"{x:.2f}" output rounding can shift
+    # symbol instances by 0.01 mm relative to internally computed pin tips.
+    for ref in refs:
+        ix, iy = instance_xy[ref]
+        instance_xy[ref] = (_q2(ix), _q2(iy))
+
     part_pin_abs: dict[tuple[str, str], tuple[float, float]] = {}
     for ref, part in result.parts.items():
         pdefs = pin_defs_by_type.get(part.part_type, [{"num": "1", "name": "1", "dir": "U"}])
@@ -1176,7 +1138,7 @@ def write_kicad_schematic(
         ix, iy = instance_xy[ref]
         use_neutral_transform = neutral_instance_transform_by_ref.get(ref, False)
         rotation = 0 if use_neutral_transform else _normalize_rotation(part.raw_rotation)
-        mirrored = False if use_neutral_transform else _effective_instance_mirrored(part.part_type, part.raw_mirror)
+        mirrored = False if use_neutral_transform else bool(part.raw_mirror)
         for pnum, (px, py, _ang) in playout.items():
             tx, ty = _transform_pin_local(px, py, rotation, mirrored)
             # KiCad lib_symbol uses Y+ UP; canvas uses Y+ DOWN.
@@ -1220,7 +1182,7 @@ def write_kicad_schematic(
 
     # Build net -> unique connected component pins
     nets: dict[str, list[tuple[str, str]]] = {}
-    for seg in result.segments:
+    for seg in _iter_segments(result):
         net_name = seg.signal
         pins = nets.setdefault(net_name, [])
         for node in (seg.node_a, seg.node_b):
@@ -1275,7 +1237,7 @@ def write_kicad_schematic(
         x, y = instance_xy[ref]
         use_neutral_transform = neutral_instance_transform_by_ref.get(ref, False)
         rotation = 0 if use_neutral_transform else _normalize_rotation(part.raw_rotation)
-        effective_mirror = _effective_instance_mirrored(part.part_type, part.raw_mirror)
+        effective_mirror = bool(part.raw_mirror)
         mirror_clause = "" if use_neutral_transform else _mirror_clause(1 if effective_mirror else 0)
         suid = _uuid()
 
@@ -1354,7 +1316,7 @@ def write_kicad_schematic(
         point_degree[k] = point_degree.get(k, 0) + 1
 
     if coord_map is not None:
-        for seg_idx, seg in enumerate(result.segments):
+        for seg_idx, seg in enumerate(all_segments):
             for vx, vy in seg.coords:
                 mx, my = coord_map(vx, vy)
                 k = _pt_key(mx, my)
@@ -1538,12 +1500,12 @@ def write_kicad_schematic(
         # segment filtering, place one label using the best available segment.
         u9_recover_pins = {"95", "96", "99", "100", "105", "106", "107"}
 
-        all_signal_names = sorted({seg.signal for seg in result.segments if seg.signal})
+        all_signal_names = sorted({seg.signal for seg in all_segments if seg.signal})
         for net_name in all_signal_names:
             if net_name in emitted_labels or _is_unnamed_net(net_name):
                 continue
 
-            seg_candidates = [seg for seg in result.segments if seg.signal == net_name and seg.coords]
+            seg_candidates = [seg for seg in all_segments if seg.signal == net_name and seg.coords]
             if not seg_candidates:
                 continue
 
@@ -1632,7 +1594,7 @@ def write_kicad_schematic(
         # single-offpage stubs in the source. This restores labels near parts
         # like R119/R120 even when the primary label was emitted elsewhere.
         offpage_stub_count: dict[str, int] = {}
-        for seg in result.segments:
+        for seg in all_segments:
             if len(seg.coords) < 2 or _is_unnamed_net(seg.signal):
                 continue
             a_off = (seg.node_a or "").startswith("@@@")
@@ -1640,7 +1602,7 @@ def write_kicad_schematic(
             if a_off ^ b_off:
                 offpage_stub_count[seg.signal] = offpage_stub_count.get(seg.signal, 0) + 1
 
-        for seg in result.segments:
+        for seg in all_segments:
             net_name = seg.signal
             if len(seg.coords) < 2 or _is_unnamed_net(net_name):
                 continue
@@ -1742,7 +1704,7 @@ def write_kicad_schematic(
 
     # Fallback synthetic net wiring + global labels for any unlabeled remaining nets.
     # Only apply for nets that have no explicit segment geometry.
-    nets_with_geom = {seg.signal for seg in result.segments if len(seg.coords) >= 2}
+    nets_with_geom = {seg.signal for seg in _iter_segments(result) if len(seg.coords) >= 2}
     for net_name in sorted(nets.keys()):
         if net_name in emitted_labels:
             continue
