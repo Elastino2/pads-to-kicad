@@ -6,6 +6,7 @@ from pathlib import Path
 
 from pads_model import (
     CaeDecalDef,
+    CaeDecalPinMap,
     CaeDecalPrimitive,
     GraphicPolyline,
     ParseResult,
@@ -378,6 +379,7 @@ class PadsParser:
 
             timestamp = 0
             primitives: list[CaeDecalPrimitive] = []
+            pinmaps: list[CaeDecalPinMap] = []
 
             bi = 1
             while bi < len(block):
@@ -416,6 +418,37 @@ class PadsParser:
                     )
                     continue
 
+                # Pinmap row pair in CAEDECAL body:
+                # T<x> <y> ... <symbol>
+                # P...
+                if token0.startswith("T") and len(token0) > 1 and self.is_int(token0[1:]) and len(toks) >= 2 and self.is_int(toks[1]):
+                    raw_x_pm = int(token0[1:])
+                    raw_y_pm = int(toks[1])
+                    raw_rotation_pm = int(toks[2]) if len(toks) >= 3 and self.is_int(toks[2]) else None
+                    raw_side_pm = int(toks[3]) if len(toks) >= 4 and self.is_int(toks[3]) else None
+                    symbol_pm = toks[-1] if len(toks) >= 2 else None
+
+                    raw_line_p: str | None = None
+                    if bi + 1 < len(block):
+                        nxt = block[bi + 1].strip()
+                        if nxt.startswith("P"):
+                            raw_line_p = block[bi + 1]
+                            bi += 1
+
+                    pinmaps.append(
+                        CaeDecalPinMap(
+                            raw_x=raw_x_pm,
+                            raw_y=raw_y_pm,
+                            raw_rotation=raw_rotation_pm,
+                            raw_side=raw_side_pm,
+                            symbol=symbol_pm,
+                            raw_line_t=text,
+                            raw_line_p=raw_line_p,
+                        )
+                    )
+                    bi += 1
+                    continue
+
                 bi += 1
 
             result.caedecals[name] = CaeDecalDef(
@@ -435,6 +468,7 @@ class PadsParser:
                 header_unknown3=header_unknown3,
                 header_tokens=hdr_toks,
                 primitives=primitives,
+                pinmaps=pinmaps,
                 raw_lines=list(block),
             )
         return result

@@ -80,6 +80,17 @@ class CaeDecalPrimitive:
 
 
 @dataclass
+class CaeDecalPinMap:
+    raw_x: int
+    raw_y: int
+    raw_rotation: int | None = None
+    raw_side: int | None = None
+    symbol: str | None = None
+    raw_line_t: str | None = None
+    raw_line_p: str | None = None
+
+
+@dataclass
 class CaeDecalDef:
     name: str
     timestamp: int
@@ -97,6 +108,7 @@ class CaeDecalDef:
     header_unknown3: int | None = None
     header_tokens: list[str] = field(default_factory=lambda: [])
     primitives: list[CaeDecalPrimitive] = field(default_factory=lambda: [])
+    pinmaps: list[CaeDecalPinMap] = field(default_factory=lambda: [])
     raw_lines: list[str] = field(default_factory=lambda: [])
 
 

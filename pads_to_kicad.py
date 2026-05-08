@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import math
 import re
 import uuid
 from pathlib import Path
 from statistics import median
 from typing import Any
 
-from pads_model import ParseResult
+from pads_model import CaeDecalDef, ParseResult
 from pads_parser import parse_node
 
 
@@ -172,6 +173,93 @@ def _build_symbol_pin_layout_from_sides(
     return layout
 
 
+def _build_symbol_pin_layout_from_caedecal_pinmap(
+    caedecal_def: CaeDecalDef | None,
+    pin_defs: list[dict[str, str]],
+) -> dict[str, tuple[float, float, int]] | None:
+    """Build local pin layout from CAEDECAL T/P pinmap anchors when available."""
+    if caedecal_def is None or not caedecal_def.pinmaps or not pin_defs:
+        return None
+
+    pin_pts = [(pm.raw_x, pm.raw_y) for pm in caedecal_def.pinmaps]
+    if not pin_pts:
+        return None
+
+    has_origin = any(px == 0 and py == 0 for px, py in pin_pts)
+    if has_origin:
+        anchor_x = 0.0
+        anchor_y = 0.0
+    else:
+        min_x = min(px for px, _ in pin_pts)
+        max_x = max(px for px, _ in pin_pts)
+        min_y = min(py for _, py in pin_pts)
+        max_y = max(py for _, py in pin_pts)
+        anchor_x = (min_x + max_x) / 2.0
+        anchor_y = (min_y + max_y) / 2.0
+
+    # 0.1 mil -> mm
+    scale = 0.00254
+
+    def _angle_from_side_rotation(side: int | None, rot: int | None, lx: float, ly: float) -> int:
+        side_map = {
+            0: 0,    # left side pins point right
+            1: 180,  # right side pins point left
+            2: 90,   # bottom side pins point up
+            3: 270,  # top side pins point down
+        }
+        if side in side_map:
+            return side_map[side]
+        if rot in {0, 90, 180, 270}:
+            return int(rot)
+        dx, dy = -lx, -ly
+        if abs(dx) >= abs(dy):
+            return 0 if dx >= 0 else 180
+        return 90 if dy >= 0 else 270
+
+    left_pts: list[tuple[float, float, int]] = []
+    right_pts: list[tuple[float, float, int]] = []
+    for pm in caedecal_def.pinmaps:
+        lx = (pm.raw_x - anchor_x) * scale
+        ly = (pm.raw_y - anchor_y) * scale
+        ang = _angle_from_side_rotation(pm.raw_side, pm.raw_rotation, lx, ly)
+        item = (lx, ly, ang)
+        if pm.raw_side == 0:
+            left_pts.append(item)
+        elif pm.raw_side == 1:
+            right_pts.append(item)
+        elif lx < 0:
+            left_pts.append(item)
+        else:
+            right_pts.append(item)
+
+    left_pts.sort(key=lambda p: -p[1])
+    right_pts.sort(key=lambda p: -p[1])
+
+    left_pins = [p for i, p in enumerate(pin_defs) if i % 2 == 0]
+    right_pins = [p for i, p in enumerate(pin_defs) if i % 2 == 1]
+
+    layout: dict[str, tuple[float, float, int]] = {}
+    default_layout = _build_symbol_pin_layout(pin_defs)
+
+    for i, p in enumerate(left_pins):
+        pnum = p["num"]
+        if i < len(left_pts):
+            x, y, ang = left_pts[i]
+            layout[pnum] = (round(x, 2), round(y, 2), ang)
+        else:
+            layout[pnum] = default_layout[pnum]
+
+    for i, p in enumerate(right_pins):
+        pnum = p["num"]
+        if i < len(right_pts):
+            x, y, ang = right_pts[i]
+            layout[pnum] = (round(x, 2), round(y, 2), ang)
+        else:
+            layout[pnum] = default_layout[pnum]
+
+    return layout
+
+
 def _symbol_bbox(
     pin_defs: list[dict[str, str]],
     pin_layout: dict[str, tuple[float, float, int]] | None = None,
@@ -212,6 +300,93 @@ def _append_arc(lines: list[str], start: tuple[float, float], mid: tuple[float, 
     lines.append("          (stroke (width 0) (type default))")
     lines.append("          (fill (type none))")
     lines.append("        )")
+
+
+def _append_caedecal_graphics(
+    lines: list[str],
+    caedecal_def: CaeDecalDef,
+    rotation: int = 0,
+    flip_y: bool = False,
+) -> bool:
+    """Append symbol graphics from parsed CAEDECAL primitives.
+
+    PADS decal coordinates are treated as 0.1 mil units and converted to mm.
+    """
+    drawable = [pr for pr in caedecal_def.primitives if pr.points]
+    if not drawable:
+        return False
+
+    all_pts = [pt for pr in drawable for pt in pr.points]
+    has_origin = any(px == 0 and py == 0 for px, py in all_pts)
+    if has_origin:
+        anchor_x = 0.0
+        anchor_y = 0.0
+    else:
+        min_x = min(p[0] for p in all_pts)
+        max_x = max(p[0] for p in all_pts)
+        min_y = min(p[1] for p in all_pts)
+        max_y = max(p[1] for p in all_pts)
+        anchor_x = (min_x + max_x) / 2.0
+        anchor_y = (min_y + max_y) / 2.0
+
+    # 0.1 mil -> mm
+    scale = 0.00254
+
+    def _rotate_pt(x: float, y: float, rot: int) -> tuple[float, float]:
+        r = rot % 360
+        if r == 90:
+            return (-y, x)
+        if r == 180:
+            return (-x, -y)
+        if r == 270:
+            return (y, -x)
+        return (x, y)
+
+    def _tx_pt(x: int, y: int) -> tuple[float, float]:
+        lx = (x - anchor_x) * scale
+        ly = (y - anchor_y) * scale
+        if flip_y:
+            ly = -ly
+        return _rotate_pt(lx, ly, rotation)
+
+    def _stroke_width_mm(raw_width: int | None) -> float:
+        if raw_width is None:
+            return 0.0
+        return max(0.0, round(raw_width * scale, 4))
+
+    emitted = False
+    for pr in drawable:
+        kind = (pr.kind or "").upper()
+
+        if kind in {"OPEN", "CLOSED", "COPCLS"} and len(pr.points) >= 2:
+            poly_pts = [_tx_pt(px, py) for px, py in pr.points]
+            if kind in {"CLOSED", "COPCLS"} and poly_pts[0] != poly_pts[-1]:
+                poly_pts.append(poly_pts[0])
+            stroke_w = _stroke_width_mm(pr.width)
+            lines.append("        (polyline")
+            lines.append("          (pts")
+            for x, y in poly_pts:
+                lines.append(f"            (xy {x:.2f} {y:.2f})")
+            lines.append("          )")
+            lines.append(f"          (stroke (width {stroke_w:.4f}) (type default))")
+            lines.append("          (fill (type none))")
+            lines.append("        )")
+            emitted = True
+            continue
+
+        if kind == "CIRCLE" and len(pr.points) >= 2:
+            cx, cy = _tx_pt(pr.points[0][0], pr.points[0][1])
+            px, py = _tx_pt(pr.points[1][0], pr.points[1][1])
+            radius = math.hypot(px - cx, py - cy)
+            if radius > 0.0:
+                stroke_w = _stroke_width_mm(pr.width)
+                lines.append(f"        (circle (center {cx:.2f} {cy:.2f}) (radius {radius:.2f})")
+                lines.append(f"          (stroke (width {stroke_w:.4f}) (type default))")
+                lines.append("          (fill (type none))")
+                lines.append("        )")
+                emitted = True
+
+    return emitted
 
 
 def _append_symbol_graphics(
@@ -380,6 +555,7 @@ def _format_lib_symbol(
     lines: list[str],
     pin_layout_override: dict[str, tuple[float, float, int]] | None = None,
     has_adapted_pins: bool = False,
+    caedecal_def: CaeDecalDef | None = None,
 ) -> None:
     pin_layout = pin_layout_override if pin_layout_override is not None else _build_symbol_pin_layout(pin_defs)
     half_w, half_h = _symbol_bbox(pin_defs, pin_layout)
@@ -416,16 +592,25 @@ def _format_lib_symbol(
             else:
                 graphics_rotation = 90 if dy >= 0 else 270
     lines.append(f"      (symbol {_quote(unit_name_prefix + '_0_1')}")
-    _append_symbol_graphics(
-        lines,
-        ref_prefix,
-        pin_defs,
-        half_w,
-        half_h,
-        part_type=part_type,
-        rotation=graphics_rotation,
-        flip_y=has_adapted_pins and ref_prefix.upper() != "Q",
-    )
+    used_caedecal = False
+    if caedecal_def is not None:
+        used_caedecal = _append_caedecal_graphics(
+            lines,
+            caedecal_def,
+            rotation=graphics_rotation,
+            flip_y=has_adapted_pins and ref_prefix.upper() != "Q",
+        )
+    if not used_caedecal:
+        _append_symbol_graphics(
+            lines,
+            ref_prefix,
+            pin_defs,
+            half_w,
+            half_h,
+            part_type=part_type,
+            rotation=graphics_rotation,
+            flip_y=has_adapted_pins and ref_prefix.upper() != "Q",
+        )
     lines.append("      )")
     lines.append(f"      (symbol {_quote(unit_name_prefix + '_1_1')}")
 
@@ -891,6 +1076,9 @@ def write_kicad_schematic(
         lib_id_by_ref[ref] = custom_lib_id
 
         base_layout = _build_symbol_pin_layout(pdefs)
+        caedecal_layout = _build_symbol_pin_layout_from_caedecal_pinmap(result.caedecals.get(part.part_type), pdefs)
+        if caedecal_layout is not None:
+            base_layout = caedecal_layout
         x0_ref, y0_ref = instance_xy[ref]
         rot_ref = _normalize_rotation(part.raw_rotation)
         mir_ref = bool(part.raw_mirror)
@@ -1224,7 +1412,17 @@ def write_kicad_schematic(
         sym_name = _sanitize_symbol_name(ref)
         ref_prefix = _ref_prefix(ref)
         has_adapted = has_adapted_pins_by_ref.get(ref, False)
-        _format_lib_symbol(lib_id, sym_name, ref_prefix, pdefs, ptype, lines, pin_layout_by_ref[ref], has_adapted)
+        _format_lib_symbol(
+            lib_id,
+            sym_name,
+            ref_prefix,
+            pdefs,
+            ptype,
+            lines,
+            pin_layout_by_ref[ref],
+            has_adapted,
+            result.caedecals.get(ptype),
+        )
     lines.append("  )")
     lines.append("")
 
