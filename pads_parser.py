@@ -134,6 +134,15 @@ class PadsParser:
             return True
         return bool(re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", token))
 
+    def _parse_node_endpoint(self, node: str) -> tuple[str | None, str | None]:
+        """Parse node reference to structured endpoint fields."""
+        if node.startswith("@@@"):
+            return None, None
+        if "." in node:
+            ref, pin = node.split(".", 1)
+            return ref, pin
+        return node, None
+
     def _is_part_header_line(self, text: str) -> bool:
         if self._is_section_token(text):
             return False
@@ -583,8 +592,20 @@ class PadsParser:
                     node_a, node_b, coord_count = seg_hdr
                     i += 1
                     coords, i = self._parse_signal_coords(lines, i, end, coord_count)
+                    node_a_ref, node_a_pin = self._parse_node_endpoint(node_a)
+                    node_b_ref, node_b_pin = self._parse_node_endpoint(node_b)
                     result.signal_lines[signal_name].append(
-                        Segment(sheet_no=sheet_no, signal=signal_name, node_a=node_a, node_b=node_b, coords=coords)
+                        Segment(
+                            sheet_no=sheet_no,
+                            signal=signal_name,
+                            node_a=node_a,
+                            node_b=node_b,
+                            coords=coords,
+                            node_a_ref=node_a_ref,
+                            node_a_pin=node_a_pin,
+                            node_b_ref=node_b_ref,
+                            node_b_pin=node_b_pin,
+                        )
                     )
                     continue
 
@@ -911,19 +932,3 @@ class PadsParser:
     def parse(self, file_path: Path, verbose: bool = False) -> ParseResult:
         """Parse PADS source file and return sheet-centric ParseResult."""
         return self._parse_sheets(file_path, verbose=verbose)
-
-# TODO : remove it after refactoring pads_pipeline to not depend on this heuristic
-def parse_node(node: str) -> tuple[str | None, str | None]:
-    """Parse a node reference into component reference and pin number.
-    
-    Examples:
-        "N$5" → (None, None)
-        "U5.2" → ("U5", "2")
-        "GND" → ("GND", None)
-    """
-    if node.startswith("@@@"):
-        return None, None
-    if "." in node:
-        ref, pin = node.split(".", 1)
-        return ref, pin
-    return node, None

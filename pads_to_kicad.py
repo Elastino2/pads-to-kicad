@@ -8,7 +8,6 @@ from statistics import median
 from typing import Any
 
 from pads_model import CaeDecalDef, ParseResult
-from pads_parser import parse_node
 
 
 def _iter_segments(result: ParseResult):
@@ -36,8 +35,7 @@ def build_kicad_ir(result: ParseResult) -> dict[str, Any]:
 
     for seg in _iter_segments(result):
         net = nets.setdefault(seg.signal, {"name": seg.signal, "connections": []})
-        for node in (seg.node_a, seg.node_b):
-            ref, pin = parse_node(node)
+        for ref, pin in ((seg.node_a_ref, seg.node_a_pin), (seg.node_b_ref, seg.node_b_pin)):
             if ref is None or pin is None:
                 continue
             net["connections"].append({"refdes": ref, "pin": pin})
@@ -124,8 +122,7 @@ def _collect_symbol_pin_defs(result: ParseResult) -> dict[str, list[dict[str, st
             inferred: set[str] = set()
             refdes = part.refdes
             for seg in _iter_segments(result):
-                for node in (seg.node_a, seg.node_b):
-                    ref, pin = parse_node(node)
+                for ref, pin in ((seg.node_a_ref, seg.node_a_pin), (seg.node_b_ref, seg.node_b_pin)):
                     if ref == refdes and pin is not None:
                         inferred.add(pin)
             defs = [{"num": p, "name": p, "dir": "U"} for p in sorted(inferred, key=_pin_sort_key)]
@@ -1008,8 +1005,7 @@ def write_kicad_schematic(
 
             end_a = seg.coords[0]
             end_b = seg.coords[-1]
-            for node, end_xy in ((seg.node_a, end_a), (seg.node_b, end_b)):
-                ref, pin = parse_node(node)
+            for ref, pin, end_xy in ((seg.node_a_ref, seg.node_a_pin, end_a), (seg.node_b_ref, seg.node_b_pin, end_b)):
                 if ref is None or pin is None:
                     continue
                 mx, my = coord_map(end_xy[0], end_xy[1])
@@ -1373,8 +1369,7 @@ def write_kicad_schematic(
     for seg in _iter_segments(result):
         net_name = seg.signal
         pins = nets.setdefault(net_name, [])
-        for node in (seg.node_a, seg.node_b):
-            ref, pin = parse_node(node)
+        for ref, pin in ((seg.node_a_ref, seg.node_a_pin), (seg.node_b_ref, seg.node_b_pin)):
             if ref is None or pin is None:
                 continue
             pair = (ref, pin)
@@ -1522,8 +1517,8 @@ def write_kicad_schematic(
 
             if len(seg.coords) >= 2:
                 # Force segment endpoints to reach their actual pin coordinates if they are component pins
-                first_node = parse_node(seg.node_a)
-                last_node = parse_node(seg.node_b)
+                first_node = (seg.node_a_ref, seg.node_a_pin)
+                last_node = (seg.node_b_ref, seg.node_b_pin)
                 
                 # Try to get the actual pin coordinates for first and last nodes
                 first_pin_coord = None
@@ -1710,8 +1705,8 @@ def write_kicad_schematic(
             def _seg_rank(s: Segment) -> tuple[int, int, int]:
                 a_off = (s.node_a or "").startswith("@@@")
                 b_off = (s.node_b or "").startswith("@@@")
-                a_ref, a_pin = parse_node(s.node_a)
-                b_ref, b_pin = parse_node(s.node_b)
+                a_ref, a_pin = s.node_a_ref, s.node_a_pin
+                b_ref, b_pin = s.node_b_ref, s.node_b_pin
                 u9_target_stub = int(
                     (
                         a_ref == "U9"

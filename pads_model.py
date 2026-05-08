@@ -42,6 +42,10 @@ class Segment:
     node_a: str
     node_b: str
     coords: list[tuple[int, int]]
+    node_a_ref: str | None = None
+    node_a_pin: str | None = None
+    node_b_ref: str | None = None
+    node_b_pin: str | None = None
 
 
 @dataclass
