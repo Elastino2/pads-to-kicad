@@ -202,6 +202,21 @@ class PadsParser:
             return 0
         return int(digits)
 
+    def _extract_pin_number_hint(self, symbol_token: str | None) -> str | None:
+        """Return a conservative electrical pin-number hint from CAE pin symbol token.
+
+        Many symbol tokens are shape/style names (e.g. PIN150, PIN50) rather than
+        electrical pin numbers. To avoid false mapping, only plain digits are used.
+        """
+        if symbol_token is None:
+            return None
+        s = symbol_token.strip()
+        if not s:
+            return None
+        if re.fullmatch(r"\d+", s):
+            return s
+        return None
+
     
     
     
@@ -450,11 +465,13 @@ class PadsParser:
 
                     pinmaps.append(
                         CaeDecalPinMap(
+                            raw_index=len(pinmaps) + 1,
                             raw_x=raw_x_pm,
                             raw_y=raw_y_pm,
                             raw_rotation=raw_rotation_pm,
                             raw_side=raw_side_pm,
                             symbol=symbol_pm,
+                            pin_number_hint=self._extract_pin_number_hint(symbol_pm),
                             raw_line_t=text,
                             raw_line_p=raw_line_p,
                         )

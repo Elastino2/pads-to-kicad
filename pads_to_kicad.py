@@ -233,12 +233,14 @@ def _build_symbol_pin_layout_from_caedecal_pinmap(
             return 0 if dx >= 0 else 180
         return 90 if dy >= 0 else 270
 
+    pm_points: list[tuple[str | None, float, float, int, int | None]] = []
     left_pts: list[tuple[float, float, int]] = []
     right_pts: list[tuple[float, float, int]] = []
     for pm in caedecal_def.pinmaps:
         lx = (pm.raw_x - anchor_x) * scale
         ly = (pm.raw_y - anchor_y) * scale
         ang = _angle_from_side_rotation(pm.raw_side, pm.raw_rotation, lx, ly)
+        pm_points.append((pm.pin_number_hint, lx, ly, ang, pm.raw_side))
         item = (lx, ly, ang)
         if pm.raw_side == 0:
             left_pts.append(item)
@@ -252,24 +254,55 @@ def _build_symbol_pin_layout_from_caedecal_pinmap(
     left_pts.sort(key=lambda p: -p[1])
     right_pts.sort(key=lambda p: -p[1])
 
-    left_pins = [p for i, p in enumerate(pin_defs) if i % 2 == 0]
-    right_pins = [p for i, p in enumerate(pin_defs) if i % 2 == 1]
-
     layout: dict[str, tuple[float, float, int]] = {}
     default_layout = _build_symbol_pin_layout(pin_defs)
 
+    # Prefer explicit pin-number hints when present in CAE pinmap symbols.
+    for hint, lx, ly, ang, _side in pm_points:
+        if hint and hint in default_layout and hint not in layout:
+            layout[hint] = (round(lx, 2), round(ly, 2), ang)
+
+    left_pins = [p for i, p in enumerate(pin_defs) if i % 2 == 0 and p["num"] not in layout]
+    right_pins = [p for i, p in enumerate(pin_defs) if i % 2 == 1 and p["num"] not in layout]
+
+    # Consume only unhinted pinmap points for fallback side assignment.
+    used_hints = {hint for hint, *_ in pm_points if hint and hint in layout}
+    left_unhinted = [
+        (lx, ly, ang)
+        for hint, lx, ly, ang, side in pm_points
+        if (hint not in used_hints) and side == 0
+    ]
+    right_unhinted = [
+        (lx, ly, ang)
+        for hint, lx, ly, ang, side in pm_points
+        if (hint not in used_hints) and side == 1
+    ]
+    center_unhinted = [
+        (lx, ly, ang)
+        for hint, lx, ly, ang, side in pm_points
+        if (hint not in used_hints) and side not in {0, 1}
+    ]
+    for lx, ly, ang in center_unhinted:
+        if lx < 0:
+            left_unhinted.append((lx, ly, ang))
+        else:
+            right_unhinted.append((lx, ly, ang))
+
+    left_unhinted.sort(key=lambda p: -p[1])
+    right_unhinted.sort(key=lambda p: -p[1])
+
     for i, p in enumerate(left_pins):
         pnum = p["num"]
-        if i < len(left_pts):
-            x, y, ang = left_pts[i]
+        if i < len(left_unhinted):
+            x, y, ang = left_unhinted[i]
             layout[pnum] = (round(x, 2), round(y, 2), ang)
         else:
             layout[pnum] = default_layout[pnum]
 
     for i, p in enumerate(right_pins):
         pnum = p["num"]
-        if i < len(right_pts):
-            x, y, ang = right_pts[i]
+        if i < len(right_unhinted):
+            x, y, ang = right_unhinted[i]
             layout[pnum] = (round(x, 2), round(y, 2), ang)
         else:
             layout[pnum] = default_layout[pnum]
@@ -432,7 +465,6 @@ def _append_symbol_graphics(
     half_h: float,
     part_type: str = "",
     rotation: int = 0,
-    mirrored: bool = False,
     flip_y: bool = False,
 ) -> None:
     """Generate symbol body graphics.
@@ -1090,14 +1122,12 @@ def write_kicad_schematic(
     lib_id_by_ref: dict[str, str] = {}
     is_standard_by_ref: dict[str, bool] = {}
     pin_layout_by_ref: dict[str, dict[str, tuple[float, float, int]]] = {}
-    pin_count_by_ref: dict[str, int] = {}
     has_adapted_pins_by_ref: dict[str, bool] = {}
     neutral_instance_transform_by_ref: dict[str, bool] = {}
 
     for ref in refs:
         part = result.parts[ref]
         pdefs = pin_defs_by_type.get(part.part_type, [{"num": "1", "name": "1", "dir": "U"}])
-        pin_count_by_ref[ref] = len(pdefs)
         lib_id, is_standard = _choose_lib_id(ref, part.part_type, pdefs)
         is_standard_by_ref[ref] = is_standard
 

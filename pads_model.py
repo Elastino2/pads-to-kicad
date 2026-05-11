@@ -86,11 +86,13 @@ class CaeDecalPrimitive:
 
 @dataclass
 class CaeDecalPinMap:
+    raw_index: int
     raw_x: int
     raw_y: int
     raw_rotation: int | None = None
     raw_side: int | None = None
     symbol: str | None = None
+    pin_number_hint: str | None = None
     raw_line_t: str | None = None
     raw_line_p: str | None = None
 
