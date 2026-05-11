@@ -10,6 +10,7 @@ from pads_model import (
     CaeDecalPrimitive,
     GraphicPolyline,
     OffpageRef,
+    NetName,
     ParseResult,
     Part,
     PartTypeDef,
@@ -741,6 +742,8 @@ class PadsParser:
             return self._parse_tiedots_section(sheet_no, lines, start, end, result)
         if sec_name == "*OFFPAGE REFS*":
             return self._parse_offpage_refs_section(sheet_no, lines, start, end, result)
+        if sec_name == "*NETNAMES*":
+            return self._parse_netnames_section(sheet_no, lines, start, end, result)
         if sec_name in (
             "*SCH*",
             "*REMARK*",
@@ -749,7 +752,6 @@ class PadsParser:
             "*FIELDS*",
             "*CAE*",
             "*BUSSES*",
-            "*NETNAMES*",
             "*END*",
         ):
             return result
@@ -933,6 +935,43 @@ class PadsParser:
             i += 1
         return result
 
+    def _parse_netnames_section(self, sheet_no: int, lines: list[str], start: int, end: int, result: ParseResult) -> ParseResult:
+        """Parse *NETNAMES* section.
+
+        The PADS format for net-name annotations is less regular than SIGNAL/OFFPAGE
+        entries, so we preserve the raw line and extract the stable leading fields:
+        net name, node id, and the first few numeric placement fields when present.
+        """
+        i = start + 1  # skip the section header line
+        while i < end:
+            text = lines[i].strip()
+            if not text:
+                i += 1
+                continue
+
+            toks = text.split()
+            if len(toks) >= 2 and toks[1].startswith("@@@O"):
+                raw_x = int(toks[2]) if len(toks) > 2 and self.is_int(toks[2]) else None
+                raw_y = int(toks[3]) if len(toks) > 3 and self.is_int(toks[3]) else None
+                raw_rotation = int(toks[4]) if len(toks) > 4 and self.is_int(toks[4]) else None
+                raw_mirror = int(toks[5]) if len(toks) > 5 and self.is_int(toks[5]) else None
+                result.netnames.append(
+                    NetName(
+                        sheet_no=sheet_no,
+                        net_name=toks[0],
+                        node_id=toks[1],
+                        raw_x=raw_x,
+                        raw_y=raw_y,
+                        raw_rotation=raw_rotation,
+                        raw_mirror=raw_mirror,
+                        raw_tokens=toks[2:],
+                        raw_line=text,
+                    )
+                )
+
+            i += 1
+        return result
+
     def _parse_sheets(self, file_path: Path, verbose: bool = False) -> ParseResult:
         """Parse PADS source file and return a sheet-centric ParseResult."""
         lines = self._read_lines(file_path)
@@ -982,6 +1021,7 @@ class PadsParser:
             out.graphic_polylines.extend(sheet_result.graphic_polylines)
             out.tiedots.extend(sheet_result.tiedots)
             out.offpage_refs.extend(sheet_result.offpage_refs)
+            out.netnames.extend(sheet_result.netnames)
             for signal_name, segs in sheet_result.signal_lines.items():
                 out.signal_lines[signal_name].extend(segs)
 

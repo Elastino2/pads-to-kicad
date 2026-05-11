@@ -87,6 +87,19 @@ class OffpageRef:
 
 
 @dataclass
+class NetName:
+    sheet_no: int
+    net_name: str
+    node_id: str
+    raw_x: int | None = None
+    raw_y: int | None = None
+    raw_rotation: int | None = None
+    raw_mirror: int | None = None
+    raw_tokens: list[str] = field(default_factory=lambda: [])
+    raw_line: str = ""
+
+
+@dataclass
 class CaeDecalPrimitive:
     kind: str
     point_count: int
@@ -140,5 +153,6 @@ class ParseResult:
     graphic_polylines: list[GraphicPolyline] = field(default_factory=lambda: [])
     tiedots: list[TieDot] = field(default_factory=lambda: [])
     offpage_refs: list[OffpageRef] = field(default_factory=lambda: [])
+    netnames: list[NetName] = field(default_factory=lambda: [])
     signal_lines: dict[str, list[Segment]] = field(default_factory=lambda: defaultdict(list))
 
