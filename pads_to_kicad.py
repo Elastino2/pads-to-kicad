@@ -741,94 +741,6 @@ def _q2(v: float) -> float:
     return float(f"{v:.2f}")
 
 
-def _is_ground_net(net_name: str) -> bool:
-    n = (net_name or "").strip().upper()
-    if not n:
-        return False
-    if n in {"GND", "AGND", "DGND", "PGND", "SGND", "VSS"}:
-        return True
-    if "GND" in n:
-        return True
-    if n.endswith("_GND") or n.startswith("GND_") or "_GND_" in n:
-        return True
-    if re.fullmatch(r"GND\d*", n):
-        return True
-    return re.fullmatch(r"VSS\d*", n) is not None
-
-
-def _is_unnamed_net(net_name: str) -> bool:
-    n = (net_name or "").strip()
-    if not n:
-        return True
-    if n.startswith("$$$") or n.startswith("@@@"):
-        return True
-    # Treat PADS auto-generated nets like N34938490 as unnamed.
-    return re.fullmatch(r"N\d*", n, re.IGNORECASE) is not None
-
-
-def _is_power_net(net_name: str) -> bool:
-    n = (net_name or "").upper()
-    if not n or _is_ground_net(n):
-        return False
-    if n.startswith("+") or n.endswith("V"):
-        return True
-    return ("VDD" in n) or ("VCC" in n) or n.startswith("VBUS")
-
-
-def _append_power_lib_symbols(lines: list[str], include_gnd: bool, include_vcc: bool) -> None:
-    if include_gnd:
-        lines.append('    (symbol "PWR:GND" (pin_names (offset 0.508)) (in_bom no) (on_board no)')
-        lines.append('      (property "Reference" "#PWR" (at 0 2.54 0)')
-        lines.append('        (effects (font (size 1.27 1.27)) hide)')
-        lines.append('      )')
-        lines.append('      (property "Value" "GND" (at 0 -3.05 0)')
-        lines.append('        (effects (font (size 1.27 1.27)))')
-        lines.append('      )')
-        lines.append('      (property "Footprint" "" (at 0 0 0)')
-        lines.append('        (effects (font (size 1.27 1.27)) hide)')
-        lines.append('      )')
-        lines.append('      (property "Datasheet" "" (at 0 0 0)')
-        lines.append('        (effects (font (size 1.27 1.27)) hide)')
-        lines.append('      )')
-        lines.append('      (symbol "GND_0_1"')
-        _append_polyline(lines, [(-1.52, -0.51), (1.52, -0.51)])
-        _append_polyline(lines, [(-1.02, -1.27), (1.02, -1.27)])
-        _append_polyline(lines, [(-0.51, -2.03), (0.51, -2.03)])
-        lines.append('      )')
-        lines.append('      (symbol "GND_1_1"')
-        lines.append('        (pin power_in line (at 0 0 270) (length 0)')
-        lines.append('          (name "GND" (effects (font (size 1.27 1.27))))')
-        lines.append('          (number "1" (effects (font (size 1.27 1.27)) hide))')
-        lines.append('        )')
-        lines.append('      )')
-        lines.append('    )')
-
-    if include_vcc:
-        lines.append('    (symbol "PWR:VCC" (pin_names (offset 0.508)) (in_bom no) (on_board no)')
-        lines.append('      (property "Reference" "#PWR" (at 0 -2.54 0)')
-        lines.append('        (effects (font (size 1.27 1.27)) hide)')
-        lines.append('      )')
-        lines.append('      (property "Value" "VCC" (at 0 3.05 0)')
-        lines.append('        (effects (font (size 1.27 1.27)))')
-        lines.append('      )')
-        lines.append('      (property "Footprint" "" (at 0 0 0)')
-        lines.append('        (effects (font (size 1.27 1.27)) hide)')
-        lines.append('      )')
-        lines.append('      (property "Datasheet" "" (at 0 0 0)')
-        lines.append('        (effects (font (size 1.27 1.27)) hide)')
-        lines.append('      )')
-        lines.append('      (symbol "VCC_0_1"')
-        _append_polyline(lines, [(0.00, 2.54), (-1.27, 0.00), (1.27, 0.00), (0.00, 2.54)])
-        lines.append('      )')
-        lines.append('      (symbol "VCC_1_1"')
-        lines.append('        (pin power_in line (at 0 0 90) (length 0)')
-        lines.append('          (name "VCC" (effects (font (size 1.27 1.27))))')
-        lines.append('          (number "1" (effects (font (size 1.27 1.27)) hide))')
-        lines.append('        )')
-        lines.append('      )')
-        lines.append('    )')
-
-
 def _append_power_symbol_instance(
     lines: list[str],
     lib_id: str,
@@ -886,8 +798,8 @@ def _pin_angle_side_biased(x: float, y: float, side_threshold: float = 4.0) -> i
     return _pin_angle_toward_center(x, y)
 
 
-def _power_symbol_xy(net_name: str, x: float, y: float) -> tuple[float, float]:
-    if _is_ground_net(net_name):
+def _power_symbol_xy(is_ground: bool, x: float, y: float) -> tuple[float, float]:
+    if is_ground:
         return (x, y + 3.81)
     return (x, y - 3.81)
 
@@ -1505,12 +1417,44 @@ def write_kicad_schematic(
     lines.append("")
 
     net_names = {n for n in nets.keys() if n}
-    include_gnd_symbol = any(_is_ground_net(n) for n in net_names)
-    include_vcc_symbol = any(_is_power_net(n) for n in net_names)
+    unnamed_nets: set[str] = set()
+    ground_nets: set[str] = set()
+    power_nets: set[str] = set()
+    for net_name in net_names:
+        n = net_name.strip()
+        if not n:
+            unnamed_nets.add(net_name)
+            continue
+        if n.startswith("$$$") or n.startswith("@@@"):
+            unnamed_nets.add(net_name)
+            continue
+        n_upper = n.upper()
+        if re.fullmatch(r"N\d*", n_upper):
+            unnamed_nets.add(net_name)
+            continue
+        if (
+            n_upper in {"GND", "AGND", "DGND", "PGND", "SGND", "VSS"}
+            or "GND" in n_upper
+            or n_upper.endswith("_GND")
+            or n_upper.startswith("GND_")
+            or "_GND_" in n_upper
+            or re.fullmatch(r"GND\d*", n_upper)
+            or re.fullmatch(r"VSS\d*", n_upper)
+        ):
+            ground_nets.add(net_name)
+            continue
+        if (
+            n_upper.startswith("+")
+            or ("VDD" in n_upper)
+            or ("VCC" in n_upper)
+            or n_upper.startswith("VBUS")
+            or re.fullmatch(r"\d+(?:\.\d+)?V(?:[_A-Z0-9]*)?", n_upper)
+        ):
+            power_nets.add(net_name)
 
-    # In-file symbol library
+    # In-file symbol library (power symbols are resolved from KiCad's global 'power' library)
     lines.append("  (lib_symbols")
-    _append_power_lib_symbols(lines, include_gnd_symbol, include_vcc_symbol)
+
     for ref in refs:
         if is_standard_by_ref[ref]:
             continue
@@ -1683,7 +1627,7 @@ def write_kicad_schematic(
             # Place one power/ground symbol per connected local region.
             # This preserves local visibility without flooding every endpoint.
             net_name = seg.signal
-            if net_name and (_is_ground_net(net_name) or _is_power_net(net_name)) and seg.coords:
+            if net_name and (net_name in ground_nets or net_name in power_nets) and seg.coords:
                 seg_pts: set[tuple[float, float]] = set()
                 for vx, vy in seg.coords:
                     mx, my = coord_map(vx, vy)
@@ -1697,11 +1641,11 @@ def write_kicad_schematic(
                     mid_x = (seg.coords[0][0] + seg.coords[-1][0]) / 2
                     mid_y = (seg.coords[0][1] + seg.coords[-1][1]) / 2
                     nx, ny = coord_map(mid_x, mid_y)
-                    sx, sy = _power_symbol_xy(net_name, nx, ny)
+                    sx, sy = _power_symbol_xy(net_name in ground_nets, nx, ny)
                     _append_wire(lines, nx, ny, sx, sy)
                     mark_endpoint(nx, ny)
                     mark_endpoint(sx, sy)
-                    pwr_lib = "PWR:GND" if _is_ground_net(net_name) else "PWR:VCC"
+                    pwr_lib = "power:GND" if net_name in ground_nets else "power:VCC"
                     _append_power_symbol_instance(lines, pwr_lib, net_name, sx, sy, root_uuid, project_name, pwr_ref_idx)
                     pwr_ref_idx += 1
                     emitted_power_symbols.add(net_name)
@@ -1716,7 +1660,7 @@ def write_kicad_schematic(
             # Apply labels only for human meaningful net names.
             if (
                 net_name not in emitted_labels
-                and not _is_unnamed_net(net_name)
+                and net_name not in unnamed_nets
             ):
                 if net_name in preferred_seg_idx and seg_idx != preferred_seg_idx[net_name]:
                     continue
@@ -1815,7 +1759,7 @@ def write_kicad_schematic(
 
         all_signal_names = sorted({seg.signal for seg in all_segments if seg.signal})
         for net_name in all_signal_names:
-            if net_name in emitted_labels or _is_unnamed_net(net_name):
+            if net_name in emitted_labels or net_name in unnamed_nets:
                 continue
 
             seg_candidates = [seg for seg in all_segments if seg.signal == net_name and seg.coords]
@@ -1894,7 +1838,7 @@ def write_kicad_schematic(
         # like R119/R120 even when the primary label was emitted elsewhere.
         offpage_stub_count: dict[str, int] = {}
         for seg in all_segments:
-            if len(seg.coords) < 2 or _is_unnamed_net(seg.signal):
+            if len(seg.coords) < 2 or seg.signal in unnamed_nets:
                 continue
             a_off = (seg.node_a or "").startswith("@@@")
             b_off = (seg.node_b or "").startswith("@@@")
@@ -1903,7 +1847,7 @@ def write_kicad_schematic(
 
         for seg in all_segments:
             net_name = seg.signal
-            if len(seg.coords) < 2 or _is_unnamed_net(net_name):
+            if len(seg.coords) < 2 or net_name in unnamed_nets:
                 continue
             if offpage_stub_count.get(net_name, 0) <= 1:
                 continue
@@ -2009,7 +1953,7 @@ def write_kicad_schematic(
             continue
         if net_name in nets_with_geom:
             continue
-        if _is_unnamed_net(net_name):
+        if net_name in unnamed_nets:
             continue
         conns = [c for c in nets[net_name] if c in part_pin_abs]
         if len(conns) < 1:
@@ -2044,12 +1988,12 @@ def write_kicad_schematic(
         _append_global_label(lines, net_name, trunk_x, ay - LABEL_OFFSET_MM, angle=0, justify="left")
         emitted_label_anchors.add((net_name, round(trunk_x, 2), round(ay - LABEL_OFFSET_MM, 2), 0))
 
-        if net_name not in emitted_power_symbols and (_is_ground_net(net_name) or _is_power_net(net_name)):
-            sx, sy = _power_symbol_xy(net_name, trunk_x, ay)
+        if net_name not in emitted_power_symbols and (net_name in ground_nets or net_name in power_nets):
+            sx, sy = _power_symbol_xy(net_name in ground_nets, trunk_x, ay)
             _append_wire(lines, trunk_x, ay, sx, sy)
             mark_endpoint(trunk_x, ay)
             mark_endpoint(sx, sy)
-            pwr_lib = "PWR:GND" if _is_ground_net(net_name) else "PWR:VCC"
+            pwr_lib = "power:GND" if net_name in ground_nets else "power:VCC"
             _append_power_symbol_instance(lines, pwr_lib, net_name, sx, sy, root_uuid, project_name, pwr_ref_idx)
             pwr_ref_idx += 1
             emitted_power_symbols.add(net_name)
@@ -2058,17 +2002,17 @@ def write_kicad_schematic(
     for net_name in sorted(nets.keys()):
         if net_name in emitted_power_symbols:
             continue
-        if not (_is_ground_net(net_name) or _is_power_net(net_name)):
+        if net_name not in ground_nets and net_name not in power_nets:
             continue
         conns = [c for c in nets[net_name] if c in part_pin_abs]
         if not conns:
             continue
         nx, ny = part_pin_abs[conns[0]]
-        sx, sy = _power_symbol_xy(net_name, nx, ny)
+        sx, sy = _power_symbol_xy(net_name in ground_nets, nx, ny)
         _append_wire(lines, nx, ny, sx, sy)
         mark_endpoint(nx, ny)
         mark_endpoint(sx, sy)
-        pwr_lib = "PWR:GND" if _is_ground_net(net_name) else "PWR:VCC"
+        pwr_lib = "power:GND" if net_name in ground_nets else "power:VCC"
         _append_power_symbol_instance(lines, pwr_lib, net_name, sx, sy, root_uuid, project_name, pwr_ref_idx)
         pwr_ref_idx += 1
         emitted_power_symbols.add(net_name)
