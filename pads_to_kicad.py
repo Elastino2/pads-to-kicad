@@ -1998,31 +1998,6 @@ def write_kicad_schematic(
             pwr_ref_idx += 1
             emitted_power_symbols.add(net_name)
 
-    # Safety net: ensure every power/ground net has at least one visible power symbol.
-    for net_name in sorted(nets.keys()):
-        if net_name in emitted_power_symbols:
-            continue
-        if net_name not in ground_nets and net_name not in power_nets:
-            continue
-        conns = [c for c in nets[net_name] if c in part_pin_abs]
-        if not conns:
-            continue
-        nx, ny = part_pin_abs[conns[0]]
-        sx, sy = _power_symbol_xy(net_name in ground_nets, nx, ny)
-        _append_wire(lines, nx, ny, sx, sy)
-        mark_endpoint(nx, ny)
-        mark_endpoint(sx, sy)
-        pwr_lib = "power:GND" if net_name in ground_nets else "power:VCC"
-        _append_power_symbol_instance(lines, pwr_lib, net_name, sx, sy, root_uuid, project_name, pwr_ref_idx)
-        pwr_ref_idx += 1
-        emitted_power_symbols.add(net_name)
-
-    # Post-emit connectivity audit.
-    # Classify remaining issues by stage so we can distinguish parser geometry loss
-    # from KiCad emission mistakes, then attempt one final safe recovery bridge.
-    parser_stage_issues: list[tuple[str, str, str, bool]] = []
-    emitter_stage_issues: list[tuple[str, str, str, float, float, float, float]] = []
-
     connected_pin_nets: dict[tuple[str, str], str] = {}
     for net_name, conns in nets.items():
         for ref, pin in set(conns):
@@ -2068,28 +2043,6 @@ def write_kicad_schematic(
                 continue
 
         emitter_stage_issues.append((ref, pin, net_name, px, py, ox, oy))
-
-    if parser_stage_issues:
-        for ref, pin, net_name, has_geom in parser_stage_issues[:WARN_REPORT_LIMIT]:
-            geom_hint = "with geometry" if has_geom else "label-only"
-            _sys.stderr.write(
-                f"[WARN] parser-stage {ref}.{pin} on {net_name}: no observed endpoint ({geom_hint})\n"
-            )
-        if len(parser_stage_issues) > WARN_REPORT_LIMIT:
-            _sys.stderr.write(
-                f"[WARN] parser-stage: {len(parser_stage_issues) - WARN_REPORT_LIMIT} additional pins omitted\n"
-            )
-
-    if emitter_stage_issues:
-        for ref, pin, net_name, px, py, ox, oy in emitter_stage_issues[:WARN_REPORT_LIMIT]:
-            _sys.stderr.write(
-                f"[WARN] emitter-stage {ref}.{pin} on {net_name}: emitted pin ({px:.2f},{py:.2f}) "
-                f"still misses observed endpoint ({ox:.2f},{oy:.2f})\n"
-            )
-        if len(emitter_stage_issues) > WARN_REPORT_LIMIT:
-            _sys.stderr.write(
-                f"[WARN] emitter-stage: {len(emitter_stage_issues) - WARN_REPORT_LIMIT} additional pins omitted\n"
-            )
 
     # Add explicit junctions where 3+ vertices overlap or 3+ wire endpoints meet.
     emitted_junctions: set[tuple[float, float]] = set()
