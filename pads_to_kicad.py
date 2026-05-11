@@ -15,6 +15,26 @@ def _iter_segments(result: ParseResult):
         yield from segs
 
 
+# PADS CAEDECAL coordinates are effectively in mil units in this source set.
+# Using 0.1 mil made symbols 10x too small (e.g. CN19).
+_CAEDECAL_UNIT_TO_MM = 0.0254
+
+
+def _get_caedecal_for_part_type(result: ParseResult, part_type: str) -> CaeDecalDef | None:
+    """Get CAEDECAL by part_type using caedecal_name from PARTTYPE definition.
+
+    The PARTTYPE section in PADS captures the gate label (CAEDECAL name)
+    directly from the source, enabling deterministic CAEDECAL lookup.
+    """
+    if not part_type:
+        return None
+
+    ptype_def = result.part_types.get(part_type)
+    if ptype_def and ptype_def.caedecal_name:
+        return result.caedecals.get(ptype_def.caedecal_name)
+    return None
+
+
 def build_kicad_ir(result: ParseResult) -> dict[str, Any]:
     """Build a KiCad-oriented intermediate representation.
 
@@ -194,8 +214,8 @@ def _build_symbol_pin_layout_from_caedecal_pinmap(
         anchor_x = (min_x + max_x) / 2.0
         anchor_y = (min_y + max_y) / 2.0
 
-    # 0.1 mil -> mm
-    scale = 0.00254
+    # CAEDECAL unit -> mm
+    scale = _CAEDECAL_UNIT_TO_MM
 
     def _angle_from_side_rotation(side: int | None, rot: int | None, lx: float, ly: float) -> int:
         side_map = {
@@ -326,8 +346,8 @@ def _append_caedecal_graphics(
         anchor_x = (min_x + max_x) / 2.0
         anchor_y = (min_y + max_y) / 2.0
 
-    # 0.1 mil -> mm
-    scale = 0.00254
+    # CAEDECAL unit -> mm
+    scale = _CAEDECAL_UNIT_TO_MM
 
     def _rotate_pt(x: float, y: float, rot: int) -> tuple[float, float]:
         r = rot % 360
@@ -590,7 +610,10 @@ def _format_lib_symbol(
                 graphics_rotation = 90 if dy >= 0 else 270
     lines.append(f"      (symbol {_quote(unit_name_prefix + '_0_1')}")
     used_caedecal = False
-    if caedecal_def is not None:
+    # For 2-pin passives (R/C/L), default procedural graphics are more stable
+    # than imported CAEDECAL primitives for orientation/display.
+    use_default_graphics = ref_prefix.upper() in {"R", "C", "L"}
+    if caedecal_def is not None and not use_default_graphics:
         used_caedecal = _append_caedecal_graphics(
             lines,
             caedecal_def,
@@ -1072,7 +1095,7 @@ def write_kicad_schematic(
         lib_id_by_ref[ref] = custom_lib_id
 
         base_layout = _build_symbol_pin_layout(pdefs)
-        caedecal_layout = _build_symbol_pin_layout_from_caedecal_pinmap(result.caedecals.get(part.part_type), pdefs)
+        caedecal_layout = _build_symbol_pin_layout_from_caedecal_pinmap(_get_caedecal_for_part_type(result, part.part_type), pdefs)
         if caedecal_layout is not None:
             base_layout = caedecal_layout
         x0_ref, y0_ref = instance_xy[ref]
@@ -1416,7 +1439,7 @@ def write_kicad_schematic(
             lines,
             pin_layout_by_ref[ref],
             has_adapted,
-            result.caedecals.get(ptype),
+            _get_caedecal_for_part_type(result, ptype),
         )
     lines.append("  )")
     lines.append("")

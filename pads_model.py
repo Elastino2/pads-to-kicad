@@ -16,6 +16,7 @@ class PartTypeDef:
     name: str
     part_class: str
     timestamp: int
+    caedecal_name: str | None = None
     pins: dict[str, PinDef] = field(default_factory=lambda: {})
 
 

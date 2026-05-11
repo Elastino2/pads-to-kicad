@@ -266,10 +266,14 @@ class PadsParser:
                         pin_count = int(st_toks[1]) if len(st_toks) > 1 and self.is_int(st_toks[1]) else 0
 
                     bi += 1
-                    # Optional gate label row (ex: RE) before pin rows.
+                    # Optional gate label row (e.g. "RE", "CONN_20037WR-12") before pin rows.
+                    # This label is the CAEDECAL name for this part type — capture it.
                     if bi < len(block):
                         label_toks = block[bi].split()
                         if not label_toks or not self.is_int(label_toks[0]):
+                            gate_label = label_toks[0] if label_toks else None
+                            if gate_label and ptd.caedecal_name is None:
+                                ptd.caedecal_name = gate_label
                             bi += 1
 
                     for _ in range(pin_count):
@@ -459,6 +463,12 @@ class PadsParser:
                     continue
 
                 bi += 1
+
+            # Normalize RE CAEDECAL: resistor pins should be side 0/1 (left/right), not 0/2 (left/bottom).
+            # The source has side=2 on the second pin, which incorrectly rotates the symbol 90°.
+            if name == "RE" and len(pinmaps) == 2:
+                if pinmaps[0].raw_side == 0 and pinmaps[1].raw_side == 2:
+                    pinmaps[1].raw_side = 1
 
             result.caedecals[name] = CaeDecalDef(
                 name=name,
