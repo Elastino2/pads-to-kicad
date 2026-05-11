@@ -1040,6 +1040,36 @@ def write_kicad_schematic(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     root_uuid = _uuid()
 
+    # Mandatory conversion constants: keep writer-level numeric knobs centralized.
+    GRID_COLS = 8
+    GRID_DX_MM = 45.72
+    GRID_DY_MM = 35.56
+    GRID_X0_MM = 50.80
+    GRID_Y0_MM = 50.80
+    REF_DEFAULT_DX_MM = -6.35
+    REF_DEFAULT_DY_MM = 7.62
+    VALUE_DEFAULT_DX_MM = -6.35
+    VALUE_DEFAULT_DY_MM = -7.62
+    TRUNK_OFFSET_MM = 3.81
+    LABEL_OFFSET_MM = 1.27
+    PIN_TIP_SNAP_TOL_MM = 0.02
+    PIN_COORD_EQUAL_EPS_MM = 0.01
+    PIN_COORD_ALIGNED_EPS_MM = 0.015
+    BRIDGE_MAX_DIST_MM = 5.0
+    BRIDGE_DIAG_DIST_MM = 4.0
+    BRIDGE_DIAG_MIN_AXIS_MM = 2.0
+    SIDE_HINT_X_THRESHOLD_MM = 0.5
+    DECL_INDEX_FALLBACK = 99999
+    LOCAL_Y_HINT_FALLBACK = -99999.0
+    VERTICAL_JOIN_EPS_MM = 1e-6
+    JUNCTION_DEGREE_THRESHOLD = 3
+    TEXT_SIZE_BASE_MM = 1.27
+    TEXT_SIZE_LARGE_MM = 1.52
+    TEXT_SIZE_SMALL_MM = 1.00
+    TEXT_RAWSIZE_LARGE_MIN = 12
+    TEXT_RAWSIZE_SMALL_MAX = 8
+    WARN_REPORT_LIMIT = 20
+
     pin_defs_by_type = _collect_symbol_pin_defs(result)
 
     coord_map = _build_coord_mapper(result)
@@ -1047,18 +1077,16 @@ def write_kicad_schematic(
     # Assign symbol placement; prefer original PADS coordinates when available.
     refs = sorted(result.parts.keys())
     instance_xy: dict[str, tuple[float, float]] = {}
-    cols = 8
-    dx = 45.72
-    dy = 35.56
-    x0 = 50.80
-    y0 = 50.80
 
     for i, ref in enumerate(refs):
         p = result.parts[ref]
         if coord_map is not None and p.raw_x is not None and p.raw_y is not None:
             instance_xy[ref] = coord_map(p.raw_x, p.raw_y)
         else:
-            instance_xy[ref] = (x0 + (i % cols) * dx, y0 + (i // cols) * dy)
+            instance_xy[ref] = (
+                GRID_X0_MM + (i % GRID_COLS) * GRID_DX_MM,
+                GRID_Y0_MM + (i // GRID_COLS) * GRID_DY_MM,
+            )
 
     # Collect observed pin endpoints from segment geometry.
     observed_pin_xy: dict[tuple[str, str], list[tuple[float, float]]] = {}
@@ -1191,9 +1219,9 @@ def write_kicad_schematic(
                 mx = median(lxs)
                 my = median(lys)
                 local_y_hint[pnum] = my
-                if mx < -0.5:
+                if mx < -SIDE_HINT_X_THRESHOLD_MM:
                     side_hint[pnum] = "L"
-                elif mx > 0.5:
+                elif mx > SIDE_HINT_X_THRESHOLD_MM:
                     side_hint[pnum] = "R"
 
             left_nums: list[str] = []
@@ -1228,8 +1256,8 @@ def write_kicad_schematic(
                     nums,
                     key=lambda n: (
                         1 if n not in local_y_hint else 0,
-                        -local_y_hint.get(n, -99999.0),
-                        decl_idx.get(n, 99999),
+                        -local_y_hint.get(n, LOCAL_Y_HINT_FALLBACK),
+                        decl_idx.get(n, DECL_INDEX_FALLBACK),
                     ),
                 )
 
@@ -1425,8 +1453,6 @@ def write_kicad_schematic(
     # Detect pins that are likely unconnected: the pin has an observed wire endpoint
     # but the gap between part_pin_abs and the nearest observed endpoint exceeds the
     # bridge threshold.  These will either be bridged or left floating.
-    _BRIDGE_MAX_DIST = 5.0
-    _BRIDGE_DIAG_THRESH = 4.0
     import sys as _sys
     for (ref, pnum), (px, py) in sorted(part_pin_abs.items()):
         obs = observed_pin_xy.get((ref, pnum))
@@ -1434,15 +1460,15 @@ def write_kicad_schematic(
             continue
         ox, oy = _pick_nearest_obs(obs, px, py)
         gap = ((px - ox) ** 2 + (py - oy) ** 2) ** 0.5
-        if gap < 0.015:
+        if gap < PIN_COORD_ALIGNED_EPS_MM:
             continue  # aligned
         dx, dy = abs(px - ox), abs(py - oy)
-        if gap > _BRIDGE_MAX_DIST:
+        if gap > BRIDGE_MAX_DIST_MM:
             _sys.stderr.write(
                 f"[WARN] {ref}.{pnum}: pin at ({px:.3f},{py:.3f}) is {gap:.2f} mm from "
                 f"nearest wire endpoint ({ox:.3f},{oy:.3f}) — too far to bridge\n"
             )
-        elif gap > _BRIDGE_DIAG_THRESH and min(dx, dy) > 2.0:
+        elif gap > BRIDGE_DIAG_DIST_MM and min(dx, dy) > BRIDGE_DIAG_MIN_AXIS_MM:
             _sys.stderr.write(
                 f"[WARN] {ref}.{pnum}: pin at ({px:.3f},{py:.3f}) has diagonal gap "
                 f"({dx:.2f},{dy:.2f}) to wire ({ox:.3f},{oy:.3f}) — bridge suppressed\n"
@@ -1542,13 +1568,16 @@ def write_kicad_schematic(
             # Keep REF-DES rotation consistent with PADS annotation angle.
             ann_angle = part.ref_ann_rotation if part.ref_ann_rotation is not None else 0
         else:
-            ann_x, ann_y = x - 6.35, y + 7.62
+            ann_x, ann_y = x + REF_DEFAULT_DX_MM, y + REF_DEFAULT_DY_MM
             ann_angle = 0
 
         lines.append(f"    (property \"Reference\" {_quote(ref)} (at {ann_x:.2f} {ann_y:.2f} {ann_angle})")
         lines.append("      (effects (font (size 1.27 1.27)))")
         lines.append("    )")
-        lines.append(f"    (property \"Value\" {_quote(ptype)} (at {x - 6.35:.2f} {y - 7.62:.2f} 0)")
+        lines.append(
+            f"    (property \"Value\" {_quote(ptype)} "
+            f"(at {x + VALUE_DEFAULT_DX_MM:.2f} {y + VALUE_DEFAULT_DY_MM:.2f} 0)"
+        )
         lines.append("      (effects (font (size 1.00 1.00)) hide)")
         lines.append("    )")
         lines.append(f"    (property \"Footprint\" {_quote(part.properties.get('Footprint', ''))} (at {x:.2f} {y:.2f} 0)")
@@ -1586,7 +1615,7 @@ def write_kicad_schematic(
     vertex_freq: dict[tuple[float, float], int] = {}
     pin_tip_points = list(part_pin_abs.values())
 
-    def snap_to_pin_tip(x: float, y: float, tol: float = 0.02) -> tuple[float, float]:
+    def snap_to_pin_tip(x: float, y: float, tol: float = PIN_TIP_SNAP_TOL_MM) -> tuple[float, float]:
         best_x, best_y = x, y
         best_d2 = tol * tol
         for px, py in pin_tip_points:
@@ -1941,7 +1970,7 @@ def write_kicad_schematic(
             # to avoid cross-bridging pin1 <-> pin2 on 2-pin components.
             ox, oy = _pick_nearest_obs(obs, px, py)
 
-            if abs(px - ox) < 0.01 and abs(py - oy) < 0.01:
+            if abs(px - ox) < PIN_COORD_EQUAL_EPS_MM and abs(py - oy) < PIN_COORD_EQUAL_EPS_MM:
                 continue
 
             dx = abs(px - ox)
@@ -1950,9 +1979,9 @@ def write_kicad_schematic(
 
             # Suppress bridges that are clearly wrong (very long or strongly diagonal).
             # A well-corrected instance should only need short axis-aligned stubs.
-            if dist > _BRIDGE_MAX_DIST:
+            if dist > BRIDGE_MAX_DIST_MM:
                 continue
-            if dist > 4.0 and min(dx, dy) > 2.0:
+            if dist > BRIDGE_DIAG_DIST_MM and min(dx, dy) > BRIDGE_DIAG_MIN_AXIS_MM:
                 # Diagonal and non-trivial — likely a mismatched net endpoint.
                 continue
 
@@ -1962,7 +1991,7 @@ def write_kicad_schematic(
             for (oref, opin), (qpx, qpy) in part_pin_abs.items():
                 if oref != ref or opin == pin:
                     continue
-                if abs(qpx - ox) < 0.01 and abs(qpy - oy) < 0.01:
+                if abs(qpx - ox) < PIN_COORD_EQUAL_EPS_MM and abs(qpy - oy) < PIN_COORD_EQUAL_EPS_MM:
                     hit_other_pin = True
                     break
             if hit_other_pin:
@@ -1987,7 +2016,7 @@ def write_kicad_schematic(
             continue
 
         ax, ay = part_pin_abs[conns[0]]
-        trunk_x = ax + 3.81
+        trunk_x = ax + TRUNK_OFFSET_MM
 
         # first pin short stub
         _append_wire(lines, ax, ay, trunk_x, ay)
@@ -1996,7 +2025,7 @@ def write_kicad_schematic(
 
         for ref, pin in conns[1:]:
             px, py = part_pin_abs[(ref, pin)]
-            px2 = px + 3.81
+            px2 = px + TRUNK_OFFSET_MM
 
             _append_wire(lines, px, py, px2, py)
             mark_endpoint(px, py)
@@ -2006,14 +2035,14 @@ def write_kicad_schematic(
             mark_endpoint(px2, py)
             mark_endpoint(trunk_x, py)
 
-            if abs(py - ay) > 1e-6:
+            if abs(py - ay) > VERTICAL_JOIN_EPS_MM:
                 _append_wire(lines, trunk_x, py, trunk_x, ay)
                 mark_endpoint(trunk_x, py)
                 mark_endpoint(trunk_x, ay)
 
         # global label at trunk anchor to force net identity
-        _append_global_label(lines, net_name, trunk_x, ay - 1.27, angle=0, justify="left")
-        emitted_label_anchors.add((net_name, round(trunk_x, 2), round(ay - 1.27, 2), 0))
+        _append_global_label(lines, net_name, trunk_x, ay - LABEL_OFFSET_MM, angle=0, justify="left")
+        emitted_label_anchors.add((net_name, round(trunk_x, 2), round(ay - LABEL_OFFSET_MM, 2), 0))
 
         if net_name not in emitted_power_symbols and (_is_ground_net(net_name) or _is_power_net(net_name)):
             sx, sy = _power_symbol_xy(net_name, trunk_x, ay)
@@ -2078,11 +2107,15 @@ def write_kicad_schematic(
         for (oref, opin), (qpx, qpy) in part_pin_abs.items():
             if oref != ref or opin == pin:
                 continue
-            if abs(qpx - ox) < 0.01 and abs(qpy - oy) < 0.01:
+            if abs(qpx - ox) < PIN_COORD_EQUAL_EPS_MM and abs(qpy - oy) < PIN_COORD_EQUAL_EPS_MM:
                 hit_other_pin = True
                 break
 
-        if dist <= _BRIDGE_MAX_DIST and not (dist > 4.0 and min(dx, dy) > 2.0) and not hit_other_pin:
+        if (
+            dist <= BRIDGE_MAX_DIST_MM
+            and not (dist > BRIDGE_DIAG_DIST_MM and min(dx, dy) > BRIDGE_DIAG_MIN_AXIS_MM)
+            and not hit_other_pin
+        ):
             _append_wire(lines, px, py, ox, oy)
             mark_endpoint(px, py)
             mark_endpoint(ox, oy)
@@ -2093,32 +2126,32 @@ def write_kicad_schematic(
         emitter_stage_issues.append((ref, pin, net_name, px, py, ox, oy))
 
     if parser_stage_issues:
-        for ref, pin, net_name, has_geom in parser_stage_issues[:20]:
+        for ref, pin, net_name, has_geom in parser_stage_issues[:WARN_REPORT_LIMIT]:
             geom_hint = "with geometry" if has_geom else "label-only"
             _sys.stderr.write(
                 f"[WARN] parser-stage {ref}.{pin} on {net_name}: no observed endpoint ({geom_hint})\n"
             )
-        if len(parser_stage_issues) > 20:
+        if len(parser_stage_issues) > WARN_REPORT_LIMIT:
             _sys.stderr.write(
-                f"[WARN] parser-stage: {len(parser_stage_issues) - 20} additional pins omitted\n"
+                f"[WARN] parser-stage: {len(parser_stage_issues) - WARN_REPORT_LIMIT} additional pins omitted\n"
             )
 
     if emitter_stage_issues:
-        for ref, pin, net_name, px, py, ox, oy in emitter_stage_issues[:20]:
+        for ref, pin, net_name, px, py, ox, oy in emitter_stage_issues[:WARN_REPORT_LIMIT]:
             _sys.stderr.write(
                 f"[WARN] emitter-stage {ref}.{pin} on {net_name}: emitted pin ({px:.2f},{py:.2f}) "
                 f"still misses observed endpoint ({ox:.2f},{oy:.2f})\n"
             )
-        if len(emitter_stage_issues) > 20:
+        if len(emitter_stage_issues) > WARN_REPORT_LIMIT:
             _sys.stderr.write(
-                f"[WARN] emitter-stage: {len(emitter_stage_issues) - 20} additional pins omitted\n"
+                f"[WARN] emitter-stage: {len(emitter_stage_issues) - WARN_REPORT_LIMIT} additional pins omitted\n"
             )
 
     # Add explicit junctions where 3+ vertices overlap or 3+ wire endpoints meet.
     emitted_junctions: set[tuple[float, float]] = set()
 
     for (jx, jy), freq in sorted(vertex_freq.items()):
-        if freq < 3:
+        if freq < JUNCTION_DEGREE_THRESHOLD:
             continue
         emitted_junctions.add((jx, jy))
         lines.append(f"  (junction (at {jx:.2f} {jy:.2f}) (diameter 0) (color 0 0 0 0)")
@@ -2126,7 +2159,7 @@ def write_kicad_schematic(
         lines.append("  )")
 
     for (jx, jy), degree in sorted(point_degree.items()):
-        if degree < 3:
+        if degree < JUNCTION_DEGREE_THRESHOLD:
             continue
         if (jx, jy) in emitted_junctions:
             continue
@@ -2159,11 +2192,11 @@ def write_kicad_schematic(
         for ta in result.text_annotations:
             tx, ty = coord_map(ta.raw_x, ta.raw_y)
             # PADS text size field is coarse; map minimum readable KiCad text height.
-            size_mm = 1.27
-            if ta.raw_size >= 12:
-                size_mm = 1.52
-            elif ta.raw_size <= 8:
-                size_mm = 1.00
+            size_mm = TEXT_SIZE_BASE_MM
+            if ta.raw_size >= TEXT_RAWSIZE_LARGE_MIN:
+                size_mm = TEXT_SIZE_LARGE_MM
+            elif ta.raw_size <= TEXT_RAWSIZE_SMALL_MAX:
+                size_mm = TEXT_SIZE_SMALL_MM
             _append_text_annotation(lines, ta.text, tx, ty, size_mm=size_mm)
 
         # Emit drawing polylines from source *LINES* section.
