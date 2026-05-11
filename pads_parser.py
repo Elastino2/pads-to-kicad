@@ -725,6 +725,8 @@ class PadsParser:
             return result
         if sec_name == "*SIGNAL*":
             return self._parse_signal_section(sheet_no, lines, start, end, result, verbose)
+        if sec_name == "*CONNECTION*":
+            return self._parse_signal_section(sheet_no, lines, start, end, result, verbose)
         if sec_name == "*PARTTYPE*":
             return self._parse_parttype_section(lines, start, end, result)
         if sec_name == "*CAEDECAL*":
@@ -744,7 +746,6 @@ class PadsParser:
             "*REMARK*",
             "*MISC*",
             "*CAM*",
-            "*CONNECTION*",
             "*FIELDS*",
             "*CAE*",
             "*BUSSES*",
