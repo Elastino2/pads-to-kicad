@@ -324,30 +324,63 @@ def _append_caedecal_graphics(
     caedecal_def: CaeDecalDef,
     rotation: int = 0,
     flip_y: bool = False,
+    prefer_pinmap_anchor: bool = False,
+    fit_graphics_to_pinmap: bool = False,
+    target_bbox: tuple[float, float, float, float] | None = None,
 ) -> bool:
-    """Append symbol graphics from parsed CAEDECAL primitives.
-
-    PADS decal coordinates are treated as 0.1 mil units and converted to mm.
-    """
+    """Append symbol graphics from parsed CAEDECAL primitives."""
     drawable = [pr for pr in caedecal_def.primitives if pr.points]
     if not drawable:
         return False
 
     all_pts = [pt for pr in drawable for pt in pr.points]
-    has_origin = any(px == 0 and py == 0 for px, py in all_pts)
-    if has_origin:
-        anchor_x = 0.0
-        anchor_y = 0.0
+
+    # For IC* symbols, align graphics anchor to pinmap anchor so body box follows
+    # original CAEDECAL position relative to pins.
+    if prefer_pinmap_anchor and caedecal_def.pinmaps:
+        pin_pts = [(pm.raw_x, pm.raw_y) for pm in caedecal_def.pinmaps]
+        has_origin = any(px == 0 and py == 0 for px, py in pin_pts)
+        if has_origin:
+            anchor_x = 0.0
+            anchor_y = 0.0
+        else:
+            min_x = min(px for px, _ in pin_pts)
+            max_x = max(px for px, _ in pin_pts)
+            min_y = min(py for _, py in pin_pts)
+            max_y = max(py for _, py in pin_pts)
+            anchor_x = (min_x + max_x) / 2.0
+            anchor_y = (min_y + max_y) / 2.0
     else:
-        min_x = min(p[0] for p in all_pts)
-        max_x = max(p[0] for p in all_pts)
-        min_y = min(p[1] for p in all_pts)
-        max_y = max(p[1] for p in all_pts)
-        anchor_x = (min_x + max_x) / 2.0
-        anchor_y = (min_y + max_y) / 2.0
+        has_origin = any(px == 0 and py == 0 for px, py in all_pts)
+        if has_origin:
+            anchor_x = 0.0
+            anchor_y = 0.0
+        else:
+            min_x = min(p[0] for p in all_pts)
+            max_x = max(p[0] for p in all_pts)
+            min_y = min(p[1] for p in all_pts)
+            max_y = max(p[1] for p in all_pts)
+            anchor_x = (min_x + max_x) / 2.0
+            anchor_y = (min_y + max_y) / 2.0
 
     # CAEDECAL unit -> mm
     scale = _CAEDECAL_UNIT_TO_MM
+
+    sx = 1.0
+    sy = 1.0
+    if fit_graphics_to_pinmap and caedecal_def.pinmaps and all_pts:
+        pin_pts = [(pm.raw_x, pm.raw_y) for pm in caedecal_def.pinmaps]
+        pin_span_x = max(px for px, _ in pin_pts) - min(px for px, _ in pin_pts)
+        pin_span_y = max(py for _, py in pin_pts) - min(py for _, py in pin_pts)
+        g_span_x = max(px for px, _ in all_pts) - min(px for px, _ in all_pts)
+        g_span_y = max(py for _, py in all_pts) - min(py for _, py in all_pts)
+
+        # Only enlarge graphics when primitive span is smaller than pin span.
+        # Keep conservative clamps to avoid extreme distortion.
+        if g_span_x > 0 and pin_span_x > g_span_x:
+            sx = min(3.0, pin_span_x / g_span_x)
+        if g_span_y > 0 and pin_span_y > g_span_y:
+            sy = min(3.0, pin_span_y / g_span_y)
 
     def _rotate_pt(x: float, y: float, rot: int) -> tuple[float, float]:
         r = rot % 360
@@ -359,12 +392,63 @@ def _append_caedecal_graphics(
             return (y, -x)
         return (x, y)
 
-    def _tx_pt(x: int, y: int) -> tuple[float, float]:
-        lx = (x - anchor_x) * scale
-        ly = (y - anchor_y) * scale
+    tx_off = 0.0
+    ty_off = 0.0
+
+    def _base_tx(x: int, y: int, cur_sx: float, cur_sy: float) -> tuple[float, float]:
+        lx = (x - anchor_x) * scale * cur_sx
+        ly = (y - anchor_y) * scale * cur_sy
         if flip_y:
             ly = -ly
         return _rotate_pt(lx, ly, rotation)
+
+    # For U* keep one CAEDECAL outline but fit/center it to the actual pin bbox.
+    if all_pts and target_bbox is not None:
+        fit_pts = [
+            pt
+            for pr in drawable
+            if (pr.kind or "").upper() in {"OPEN", "CLOSED", "COPCLS"}
+            for pt in pr.points
+        ]
+        if not fit_pts:
+            fit_pts = all_pts
+        tgt_min_x, tgt_max_x, tgt_min_y, tgt_max_y = target_bbox
+        cur_pts = [_base_tx(px, py, sx, sy) for px, py in fit_pts]
+        cur_min_x = min(x for x, _ in cur_pts)
+        cur_max_x = max(x for x, _ in cur_pts)
+        cur_min_y = min(y for _, y in cur_pts)
+        cur_max_y = max(y for _, y in cur_pts)
+        cur_w = cur_max_x - cur_min_x
+        cur_h = cur_max_y - cur_min_y
+        tgt_w = max(0.0, tgt_max_x - tgt_min_x)
+        tgt_h = max(0.0, tgt_max_y - tgt_min_y)
+
+        if cur_w > 0 and tgt_w > cur_w:
+            sx = min(4.0, sx * (tgt_w / cur_w))
+        if cur_h > 0 and tgt_h > cur_h:
+            sy = min(4.0, sy * (tgt_h / cur_h))
+
+        cur_pts = [_base_tx(px, py, sx, sy) for px, py in fit_pts]
+        cur_min_x = min(x for x, _ in cur_pts)
+        cur_max_x = max(x for x, _ in cur_pts)
+        cur_min_y = min(y for _, y in cur_pts)
+        cur_max_y = max(y for _, y in cur_pts)
+        cur_cx = (cur_min_x + cur_max_x) / 2.0
+        cur_cy = (cur_min_y + cur_max_y) / 2.0
+        tgt_cx = (tgt_min_x + tgt_max_x) / 2.0
+        tgt_cy = (tgt_min_y + tgt_max_y) / 2.0
+        tx_off = tgt_cx - cur_cx
+        ty_off = tgt_cy - cur_cy
+
+    def _tx_pt(x: int, y: int) -> tuple[float, float]:
+        lx = (x - anchor_x) * scale * sx
+        ly = (y - anchor_y) * scale * sy
+        if flip_y:
+            ly = -ly
+        rx, ry = _rotate_pt(lx, ly, rotation)
+        rx += tx_off
+        ry += ty_off
+        return (rx, ry)
 
     def _stroke_width_mm(raw_width: int | None) -> float:
         if raw_width is None:
@@ -610,15 +694,21 @@ def _format_lib_symbol(
                 graphics_rotation = 90 if dy >= 0 else 270
     lines.append(f"      (symbol {_quote(unit_name_prefix + '_0_1')}")
     used_caedecal = False
-    # For 2-pin passives (R/C/L), default procedural graphics are more stable
-    # than imported CAEDECAL primitives for orientation/display.
+    # For 2-pin passives (R/C/L), procedural graphics are more stable.
+    # U* should honor original CAEDECAL graphics without fit/scaling overrides.
     use_default_graphics = ref_prefix.upper() in {"R", "C", "L"}
+    prefer_pinmap_anchor = ref_prefix.upper().startswith(("IC", "U"))
+    fit_graphics_to_pinmap = False
+    target_bbox = None
     if caedecal_def is not None and not use_default_graphics:
         used_caedecal = _append_caedecal_graphics(
             lines,
             caedecal_def,
             rotation=graphics_rotation,
             flip_y=has_adapted_pins and ref_prefix.upper() != "Q",
+            prefer_pinmap_anchor=prefer_pinmap_anchor,
+            fit_graphics_to_pinmap=fit_graphics_to_pinmap,
+            target_bbox=target_bbox,
         )
     if not used_caedecal:
         _append_symbol_graphics(
@@ -1078,6 +1168,8 @@ def write_kicad_schematic(
         part = result.parts[ref]
         pdefs = pin_defs_by_type.get(part.part_type, [{"num": "1", "name": "1", "dir": "U"}])
         pin_count_by_ref[ref] = len(pdefs)
+        ref_prefix_u = _ref_prefix(ref).upper()
+        ignore_mirror_for_u = ref_prefix_u.startswith("U") and len(pdefs) > 2
         lib_id, is_standard = _choose_lib_id(ref, part.part_type, pdefs)
         is_standard_by_ref[ref] = is_standard
 
@@ -1100,7 +1192,7 @@ def write_kicad_schematic(
             base_layout = caedecal_layout
         x0_ref, y0_ref = instance_xy[ref]
         rot_ref = _normalize_rotation(part.raw_rotation)
-        mir_ref = bool(part.raw_mirror)
+        mir_ref = False if ignore_mirror_for_u else bool(part.raw_mirror)
 
         # Adaptive pin fitting is only reliable for 2-pin devices.
         # For ICs/multi-pin parts it can snap pins to distant net endpoints,
@@ -1344,8 +1436,10 @@ def write_kicad_schematic(
         playout = pin_layout_by_ref[ref]
         ix, iy = instance_xy[ref]
         use_neutral_transform = neutral_instance_transform_by_ref.get(ref, False)
+        ref_prefix_u = _ref_prefix(ref).upper()
+        ignore_mirror_for_u = ref_prefix_u.startswith("U") and len(pdefs) > 2
         rotation = 0 if use_neutral_transform else _normalize_rotation(part.raw_rotation)
-        mirrored = False if use_neutral_transform else bool(part.raw_mirror)
+        mirrored = False if (use_neutral_transform or ignore_mirror_for_u) else bool(part.raw_mirror)
         for pnum, (px, py, _ang) in playout.items():
             tx, ty = _transform_pin_local(px, py, rotation, mirrored)
             # KiCad lib_symbol uses Y+ UP; canvas uses Y+ DOWN.
@@ -1452,8 +1546,10 @@ def write_kicad_schematic(
         lib_id = lib_id_by_ref[ref]
         x, y = instance_xy[ref]
         use_neutral_transform = neutral_instance_transform_by_ref.get(ref, False)
+        ref_prefix_u = _ref_prefix(ref).upper()
+        ignore_mirror_for_u = ref_prefix_u.startswith("U") and len(pdefs) > 2
         rotation = 0 if use_neutral_transform else _normalize_rotation(part.raw_rotation)
-        effective_mirror = bool(part.raw_mirror)
+        effective_mirror = False if ignore_mirror_for_u else bool(part.raw_mirror)
         mirror_clause = "" if use_neutral_transform else _mirror_clause(1 if effective_mirror else 0)
         suid = _uuid()
 
