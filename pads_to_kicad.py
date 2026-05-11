@@ -874,6 +874,18 @@ def _pin_angle_toward_center(x: float, y: float) -> int:
     return 90 if dy >= 0 else 270
 
 
+def _pin_angle_side_biased(x: float, y: float, side_threshold: float = 4.0) -> int:
+    """Prefer horizontal orientation for clear side pins; otherwise use center direction.
+
+    This avoids rotating right/left side pins into top/bottom directions after
+    endpoint adaptation, while still keeping center pins (e.g. bottom power pin)
+    vertically oriented.
+    """
+    if abs(x) >= side_threshold:
+        return 180 if x > 0 else 0
+    return _pin_angle_toward_center(x, y)
+
+
 def _power_symbol_xy(net_name: str, x: float, y: float) -> tuple[float, float]:
     if _is_ground_net(net_name):
         return (x, y + 3.81)
@@ -1332,11 +1344,11 @@ def write_kicad_schematic(
                     tx_obs = ox_ic2 - ix_fin
                     ty_obs = iy_fin - oy_ic2
                     lib_x_ic, lib_y_ic = _inverse_transform_pin_local(tx_obs, ty_obs, rot_ref, mir_ref)
-                    ang_ic = _pin_angle_toward_center(lib_x_ic, lib_y_ic)
+                    ang_ic = _pin_angle_side_biased(lib_x_ic, lib_y_ic)
                     adapted_ic[pnum_ic2] = (_q2(lib_x_ic), _q2(lib_y_ic), ang_ic)
                     any_adapted_ic = True
                 else:
-                    ang_ic = _pin_angle_toward_center(bx_ic2, by_ic2)
+                    ang_ic = _pin_angle_side_biased(bx_ic2, by_ic2)
                     adapted_ic[pnum_ic2] = (bx_ic2, by_ic2, ang_ic)
             pin_layout_by_ref[ref] = adapted_ic if any_adapted_ic else final_ic_layout
             has_adapted_pins_by_ref[ref] = any_adapted_ic
