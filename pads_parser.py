@@ -464,12 +464,6 @@ class PadsParser:
 
                 bi += 1
 
-            # Normalize RE CAEDECAL: resistor pins should be side 0/1 (left/right), not 0/2 (left/bottom).
-            # The source has side=2 on the second pin, which incorrectly rotates the symbol 90°.
-            if name == "RE" and len(pinmaps) == 2:
-                if pinmaps[0].raw_side == 0 and pinmaps[1].raw_side == 2:
-                    pinmaps[1].raw_side = 1
-
             result.caedecals[name] = CaeDecalDef(
                 name=name,
                 timestamp=timestamp,
