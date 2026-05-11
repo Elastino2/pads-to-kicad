@@ -9,6 +9,7 @@ from pads_model import (
     CaeDecalPinMap,
     CaeDecalPrimitive,
     GraphicPolyline,
+    OffpageRef,
     ParseResult,
     Part,
     PartTypeDef,
@@ -736,6 +737,8 @@ class PadsParser:
             return self._parse_lines_section(sheet_no, lines, start, end, result)
         if sec_name == "*TIEDOTS*":
             return self._parse_tiedots_section(sheet_no, lines, start, end, result)
+        if sec_name == "*OFFPAGE REFS*":
+            return self._parse_offpage_refs_section(sheet_no, lines, start, end, result)
         if sec_name in (
             "*SCH*",
             "*REMARK*",
@@ -745,7 +748,6 @@ class PadsParser:
             "*FIELDS*",
             "*CAE*",
             "*BUSSES*",
-            "*OFFPAGE REFS*",
             "*NETNAMES*",
             "*END*",
         ):
@@ -884,7 +886,7 @@ class PadsParser:
         return result
 
     def _parse_tiedots_section(self, sheet_no: int, lines: list[str], start: int, end: int, result: ParseResult) -> ParseResult:
-        i = start + 1
+        i = start + 1  # skip the section header line
         while i < end:
             text = lines[i].strip()
             if not text:
@@ -894,6 +896,39 @@ class PadsParser:
             toks = text.split()
             if toks[0].startswith("@@@D") and self.is_int(toks[1]) and self.is_int(toks[2]):
                 result.tiedots.append(TieDot(sheet_no=sheet_no, raw_x=int(toks[1]), raw_y=int(toks[2])))
+            i += 1
+        return result
+
+    def _parse_offpage_refs_section(self, sheet_no: int, lines: list[str], start: int, end: int, result: ParseResult) -> ParseResult:
+        """Parse *OFFPAGE REFS* section.
+
+        Each entry has the format:
+            @@@O<n>  <net_name>  <sym_type>  <x>  <y>  <rotation>  ...
+        """
+        i = start + 1  # skip the section header line
+        while i < end:
+            text = lines[i].strip()
+            if not text:
+                i += 1
+                continue
+            toks = text.split()
+            # Minimum: node_id  net_name  sym_type  x  y
+            if (
+                len(toks) >= 5
+                and toks[0].startswith("@@@O")
+                and self.is_int(toks[3])
+                and self.is_int(toks[4])
+            ):
+                rotation = int(toks[5]) if len(toks) >= 6 and self.is_int(toks[5]) else 0
+                result.offpage_refs.append(OffpageRef(
+                    sheet_no=sheet_no,
+                    node_id=toks[0],
+                    net_name=toks[1],
+                    sym_type=toks[2],
+                    raw_x=int(toks[3]),
+                    raw_y=int(toks[4]),
+                    raw_rotation=rotation,
+                ))
             i += 1
         return result
 
@@ -945,6 +980,7 @@ class PadsParser:
             out.text_annotations.extend(sheet_result.text_annotations)
             out.graphic_polylines.extend(sheet_result.graphic_polylines)
             out.tiedots.extend(sheet_result.tiedots)
+            out.offpage_refs.extend(sheet_result.offpage_refs)
             for signal_name, segs in sheet_result.signal_lines.items():
                 out.signal_lines[signal_name].extend(segs)
 

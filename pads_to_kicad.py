@@ -1552,9 +1552,17 @@ def write_kicad_schematic(
     # Reconstructed net wiring from PADS segment geometry when possible.
     emitted_labels: set[str] = set()
     emitted_label_anchors: set[tuple[str, float, float, int]] = set()
+    emitted_label_positions: set[tuple[str, float, float]] = set()
     emitted_power_symbols: set[str] = set()
     power_regions: dict[str, list[set[tuple[float, float]]]] = {}
     pwr_ref_idx = 1
+
+    # Index offpage refs by node_id so segments can look up original PADS
+    # power/ground symbol positions directly instead of estimating from
+    # segment midpoints.
+    offpage_ref_by_node: dict[str, Any] = {
+        r.node_id: r for r in result.offpage_refs
+    }
     point_degree: dict[tuple[float, float], int] = {}
     vertex_freq: dict[tuple[float, float], int] = {}
     pin_tip_points = list(part_pin_abs.values())
@@ -1637,10 +1645,20 @@ def write_kicad_schematic(
                 hit_idxs = [i for i, reg in enumerate(regions) if not reg.isdisjoint(seg_pts)]
 
                 if not hit_idxs:
-                    # Place power symbol at segment midpoint instead of start point (pin location)
-                    mid_x = (seg.coords[0][0] + seg.coords[-1][0]) / 2
-                    mid_y = (seg.coords[0][1] + seg.coords[-1][1]) / 2
-                    nx, ny = coord_map(mid_x, mid_y)
+                    # Use the @@@O offpage ref coordinate when available (exact PADS
+                    # power symbol position); fall back to segment midpoint.
+                    offpage_node = None
+                    if seg.node_a and seg.node_a.startswith("@@@O"):
+                        offpage_node = seg.node_a
+                    elif seg.node_b and seg.node_b.startswith("@@@O"):
+                        offpage_node = seg.node_b
+                    oref = offpage_ref_by_node.get(offpage_node) if offpage_node else None
+                    if oref is not None and coord_map is not None:
+                        nx, ny = coord_map(oref.raw_x, oref.raw_y)
+                    else:
+                        mid_x = (seg.coords[0][0] + seg.coords[-1][0]) / 2
+                        mid_y = (seg.coords[0][1] + seg.coords[-1][1]) / 2
+                        nx, ny = coord_map(mid_x, mid_y)
                     sx, sy = _power_symbol_xy(net_name in ground_nets, nx, ny)
                     _append_wire(lines, nx, ny, sx, sy)
                     mark_endpoint(nx, ny)
@@ -1840,8 +1858,10 @@ def write_kicad_schematic(
         for seg in all_segments:
             if len(seg.coords) < 2 or seg.signal in unnamed_nets:
                 continue
-            a_off = (seg.node_a or "").startswith("@@@")
-            b_off = (seg.node_b or "").startswith("@@@")
+            # Only @@@O* nodes are true off-page connectors; @@@D* are tiedot
+            # (junction) nodes and should not be treated as label anchors.
+            a_off = (seg.node_a or "").startswith("@@@O")
+            b_off = (seg.node_b or "").startswith("@@@O")
             if a_off ^ b_off:
                 offpage_stub_count[seg.signal] = offpage_stub_count.get(seg.signal, 0) + 1
 
@@ -1856,8 +1876,8 @@ def write_kicad_schematic(
             ex, ey = coord_map(seg.coords[-1][0], seg.coords[-1][1])
             node_a = seg.node_a or ""
             node_b = seg.node_b or ""
-            a_offpage = node_a.startswith("@@@")
-            b_offpage = node_b.startswith("@@@")
+            a_offpage = node_a.startswith("@@@O")
+            b_offpage = node_b.startswith("@@@O")
 
             if not (a_offpage ^ b_offpage):
                 continue
@@ -1896,12 +1916,19 @@ def write_kicad_schematic(
                     lang = 90
                     ljust = "left"
 
+            # Deduplicate by position only (ignore angle): two segments that
+            # share a junction node (e.g. @@@D78) can both resolve to the same
+            # canvas point but compute different angles (one horizontal, one
+            # vertical). Including angle in the key would emit duplicate labels
+            # at the same location.
+            pos_key = (net_name, round(lx, 2), round(ly, 2))
             anchor_key = (net_name, round(lx, 2), round(ly, 2), lang)
-            if anchor_key in emitted_label_anchors:
+            if pos_key in emitted_label_positions:
                 continue
 
             _append_global_label(lines, net_name, lx, ly, angle=lang, justify=ljust)
             emitted_label_anchors.add(anchor_key)
+            emitted_label_positions.add(pos_key)
 
         # Bridge symbol pin points to observed PADS segment endpoints.
         for (ref, pin), obs in observed_pin_xy.items():

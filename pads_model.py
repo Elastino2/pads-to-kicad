@@ -76,6 +76,17 @@ class TieDot:
 
 
 @dataclass
+class OffpageRef:
+    sheet_no: int
+    node_id: str       # e.g. "@@@O5"
+    net_name: str      # e.g. "3.3DVCC"
+    sym_type: str      # e.g. "$PWR_SYMS", "$GND_SYMS", "@TERM", "$OSR_SYMS"
+    raw_x: int
+    raw_y: int
+    raw_rotation: int  # 0, 90, 180, 270
+
+
+@dataclass
 class CaeDecalPrimitive:
     kind: str
     point_count: int
@@ -128,5 +139,6 @@ class ParseResult:
     text_annotations: list[TextAnnotation] = field(default_factory=lambda: [])
     graphic_polylines: list[GraphicPolyline] = field(default_factory=lambda: [])
     tiedots: list[TieDot] = field(default_factory=lambda: [])
+    offpage_refs: list[OffpageRef] = field(default_factory=lambda: [])
     signal_lines: dict[str, list[Segment]] = field(default_factory=lambda: defaultdict(list))
 
