@@ -1512,8 +1512,11 @@ def write_kicad_schematic(
                                              part.raw_y + part.ref_ann_dy)
             ann_x = x + (raw_ann_x - base_x)
             ann_y = y + (raw_ann_y - base_y)
-            # Annotation rotation in PADS is absolute (world coordinates).
-            ann_angle = (part.ref_ann_rotation or 0) % 360
+            # PADS annotation rotation is world-absolute. When use_neutral_transform
+            # places the part at 0° instead of its original PADS rotation, subtract
+            # part_text_rot and add back the effective KiCad rotation so the text
+            # reads the same relative to the component body.
+            ann_angle = ((part.ref_ann_rotation or 0) - part_text_rot + rotation) % 360
         else:
             ann_x, ann_y = x + REF_DEFAULT_DX_MM, y + REF_DEFAULT_DY_MM
             ann_angle = 0
@@ -1530,8 +1533,8 @@ def write_kicad_schematic(
                                        part.raw_y + part.value_ann_dy)
             val_x = x + (raw_vx - base_x)
             val_y = y + (raw_vy - base_y)
-            # PART-TYPE text rotation in this source behaves as absolute angle.
-            val_angle = part.value_ann_rotation if part.value_ann_rotation is not None else 0
+            # Apply same rotation compensation as Reference.
+            val_angle = ((part.value_ann_rotation or 0) - part_text_rot + rotation) % 360
         else:
             val_x = x + VALUE_DEFAULT_DX_MM
             val_y = y + VALUE_DEFAULT_DY_MM
