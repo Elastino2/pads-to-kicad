@@ -707,7 +707,7 @@ class PadsParser:
                             part.ref_ann_dx = ann_dx
                             part.ref_ann_dy = ann_dy
                             part.ref_ann_rotation = ann_rot
-                        elif ann_label == "PART-TYPE":
+                        elif ann_label == "VALUE":
                             part.value_ann_dx = ann_dx
                             part.value_ann_dy = ann_dy
                             part.value_ann_rotation = ann_rot

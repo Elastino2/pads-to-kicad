@@ -723,7 +723,6 @@ def _part_properties(part_props: dict[str, str]) -> list[tuple[str, str]]:
         "Manufacturer_Part_Number",
         "Description",
         "Datasheet",
-        "SPEC",
     ]
     props: list[tuple[str, str]] = []
     for key in important:
@@ -1513,8 +1512,8 @@ def write_kicad_schematic(
                                              part.raw_y + part.ref_ann_dy)
             ann_x = x + (raw_ann_x - base_x)
             ann_y = y + (raw_ann_y - base_y)
-            # Combine annotation rotation with part rotation.
-            ann_angle = ((part.ref_ann_rotation or 0) + part_text_rot) % 360
+            # Annotation rotation in PADS is absolute (world coordinates).
+            ann_angle = (part.ref_ann_rotation or 0) % 360
         else:
             ann_x, ann_y = x + REF_DEFAULT_DX_MM, y + REF_DEFAULT_DY_MM
             ann_angle = 0
