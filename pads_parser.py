@@ -692,17 +692,25 @@ class PadsParser:
             for bi in range(1, len(block)):
                 _, st = block[bi]
 
-                # Detect REF-DES annotation offset line (numeric tokens, next line == "REF-DES")
+                # Detect annotation offset line (numeric tokens, next line = label)
                 if (
                     re.match(r"^-?\d+\s+-?\d+", st)
                     and bi + 1 < len(block)
-                    and block[bi + 1][1].upper() == "REF-DES"
                 ):
                     toks = st.split()
                     if len(toks) >= 3 and self.is_int(toks[0]) and self.is_int(toks[1]) and self.is_int(toks[2]):
-                        part.ref_ann_dx = int(toks[0])
-                        part.ref_ann_dy = int(toks[1])
-                        part.ref_ann_rotation = int(toks[2])
+                        ann_dx = int(toks[0])
+                        ann_dy = int(toks[1])
+                        ann_rot = int(toks[2])
+                        ann_label = block[bi + 1][1].upper()
+                        if ann_label == "REF-DES":
+                            part.ref_ann_dx = ann_dx
+                            part.ref_ann_dy = ann_dy
+                            part.ref_ann_rotation = ann_rot
+                        elif ann_label == "PART-TYPE":
+                            part.value_ann_dx = ann_dx
+                            part.value_ann_dy = ann_dy
+                            part.value_ann_rotation = ann_rot
 
                 prop = self._parse_quoted_property_line(st)
                 if prop:

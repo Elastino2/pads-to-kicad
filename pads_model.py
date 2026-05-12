@@ -33,6 +33,10 @@ class Part:
     ref_ann_dx: int | None = None
     ref_ann_dy: int | None = None
     ref_ann_rotation: int | None = None
+    # PART-TYPE annotation offset/rotation from PADS PART block
+    value_ann_dx: int | None = None
+    value_ann_dy: int | None = None
+    value_ann_rotation: int | None = None
     properties: dict[str, str] = field(default_factory=lambda: {})
 
 

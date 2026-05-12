@@ -1500,6 +1500,10 @@ def write_kicad_schematic(
         lines.append("    (in_bom yes) (on_board yes) (dnp no)")
         lines.append(f"    (uuid {suid})")
 
+        # PADS part-text angles are effectively relative to part orientation in
+        # many legacy files; fold part rotation into emitted KiCad text angles.
+        part_text_rot = _normalize_rotation(part.raw_rotation)
+
         # Reference property placement: use PADS REF-DES annotation offset when available.
         if (coord_map is not None
                 and part.raw_x is not None and part.raw_y is not None
@@ -1509,8 +1513,8 @@ def write_kicad_schematic(
                                              part.raw_y + part.ref_ann_dy)
             ann_x = x + (raw_ann_x - base_x)
             ann_y = y + (raw_ann_y - base_y)
-            # Keep REF-DES rotation consistent with PADS annotation angle.
-            ann_angle = part.ref_ann_rotation if part.ref_ann_rotation is not None else 0
+            # Combine annotation rotation with part rotation.
+            ann_angle = ((part.ref_ann_rotation or 0) + part_text_rot) % 360
         else:
             ann_x, ann_y = x + REF_DEFAULT_DX_MM, y + REF_DEFAULT_DY_MM
             ann_angle = 0
@@ -1518,11 +1522,33 @@ def write_kicad_schematic(
         lines.append(f"    (property \"Reference\" {_quote(ref)} (at {ann_x:.2f} {ann_y:.2f} {ann_angle})")
         lines.append("      (effects (font (size 1.27 1.27)))")
         lines.append("    )")
+        # Value property placement: prefer PADS PART-TYPE annotation transform.
+        if (coord_map is not None
+                and part.raw_x is not None and part.raw_y is not None
+                and part.value_ann_dx is not None and part.value_ann_dy is not None):
+            base_x, base_y = coord_map(part.raw_x, part.raw_y)
+            raw_vx, raw_vy = coord_map(part.raw_x + part.value_ann_dx,
+                                       part.raw_y + part.value_ann_dy)
+            val_x = x + (raw_vx - base_x)
+            val_y = y + (raw_vy - base_y)
+            # PART-TYPE text rotation in this source behaves as absolute angle.
+            val_angle = part.value_ann_rotation if part.value_ann_rotation is not None else 0
+        else:
+            val_x = x + VALUE_DEFAULT_DX_MM
+            val_y = y + VALUE_DEFAULT_DY_MM
+            val_angle = 0
+
+        # KiCad's canonical property is "Value". PADS "SPEC" is domain-specific
+        # metadata, so map SPEC to Value when present.
+        value_text = part.properties.get("SPEC") or ptype
+        show_value = bool(part.properties.get("SPEC"))
+
         lines.append(
-            f"    (property \"Value\" {_quote(ptype)} "
-            f"(at {x + VALUE_DEFAULT_DX_MM:.2f} {y + VALUE_DEFAULT_DY_MM:.2f} 0)"
+            f"    (property \"Value\" {_quote(value_text)} "
+            f"(at {val_x:.2f} {val_y:.2f} {val_angle})"
         )
-        lines.append("      (effects (font (size 1.00 1.00)) hide)")
+        value_effects = "      (effects (font (size 1.00 1.00)))" if show_value else "      (effects (font (size 1.00 1.00)) hide)"
+        lines.append(value_effects)
         lines.append("    )")
         lines.append(f"    (property \"Footprint\" {_quote(part.properties.get('Footprint', ''))} (at {x:.2f} {y:.2f} 0)")
         lines.append("      (effects (font (size 1.27 1.27)) hide)")
